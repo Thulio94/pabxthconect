@@ -16,6 +16,7 @@ class AmiEventProcessor
             'Newchannel' => $this->newChannel($event),
             'DialBegin' => $this->dialBegin($event),
             'BridgeEnter' => $this->bridgeEnter($event),
+            'MixMonitorStop' => $this->mixMonitorStop($event),
             'Hangup' => $this->hangup($event),
             default => null,
         };
@@ -57,11 +58,19 @@ class AmiEventProcessor
         if ($extension->tenant->record_calls) {
             $deleteAfter = $extension->tenant->recording_retention_days
                 ? now()->addDays($extension->tenant->recording_retention_days) : null;
-            Recording::firstOrCreate(['call_record_id' => $call->id], [
-                'storage_disk' => 'pbx_recordings',
-                'path' => "tenant-{$extension->tenant_id}/{$uniqueId}.wav",
-                'delete_after' => $deleteAfter,
-            ]);
+            $recording = Recording::firstOrNew(['call_record_id' => $call->id]);
+            // Replace an unavailable browser fallback placeholder with the WAV
+            // path that MixMonitor writes in the shared recordings volume.
+            if (! $recording->available_at) {
+                $recording->fill([
+                    'storage_disk' => 'pbx_recordings',
+                    'path' => "tenant-{$extension->tenant_id}/{$uniqueId}.wav",
+                    'mime_type' => 'audio/wav',
+                    'size_bytes' => null,
+                    'delete_after' => $recording->delete_after ?? $deleteAfter,
+                    'deleted_at' => null,
+                ])->save();
+            }
         }
     }
 
@@ -98,19 +107,45 @@ class AmiEventProcessor
             'status' => $call->answered_at ? 'completed' : 'failed',
             'hangup_cause' => $event['Cause-txt'] ?? $event['Cause'] ?? null,
         ]);
+        $this->finalizeRecording($call, 20);
+    }
+
+    private function mixMonitorStop(array $event): void
+    {
+        $call = $this->callFromIdentifiers($event['Uniqueid'] ?? null, $event['Linkedid'] ?? null);
+        if ($call) $this->finalizeRecording($call, 5);
+    }
+
+    private function finalizeRecording(CallRecord $call, int $attempts = 1): void
+    {
         $recording = $call->recording;
-        if ($recording) {
-            $disk = Storage::disk($recording->storage_disk);
-            // MixMonitor fecha o WAV logo após o Hangup; aguarde brevemente para
-            // evitar que o evento AMI vença a gravação na corrida de finalização.
-            for ($attempt = 0; $attempt < 10 && ! $disk->exists($recording->path); $attempt++) {
-                usleep(100_000);
-            }
-            if ($disk->exists($recording->path)) {
-                clearstatcache(true, $disk->path($recording->path));
-                $recording->update(['size_bytes' => $disk->size($recording->path), 'available_at' => now()]);
-            }
-        }
+        if (! $recording || $recording->available_at) return;
+
+        $nativePath = $call->asterisk_uniqueid && ! str_starts_with($call->asterisk_uniqueid, 'web-')
+            ? "tenant-{$call->tenant_id}/{$call->asterisk_uniqueid}.wav"
+            : $recording->path;
+        $disk = Storage::disk('pbx_recordings');
+        for ($attempt = 0; $attempt < $attempts && ! $disk->exists($nativePath); $attempt++) usleep(100_000);
+        if (! $disk->exists($nativePath)) return;
+
+        clearstatcache(true, $disk->path($nativePath));
+        $recording->update([
+            'storage_disk' => 'pbx_recordings',
+            'path' => $nativePath,
+            'mime_type' => 'audio/wav',
+            'size_bytes' => $disk->size($nativePath),
+            'available_at' => now(),
+            'deleted_at' => null,
+        ]);
+    }
+
+    private function callFromIdentifiers(?string $uniqueId, ?string $linkedId): ?CallRecord
+    {
+        if (! $uniqueId && ! $linkedId) return null;
+        return CallRecord::query()->where(function ($query) use ($uniqueId, $linkedId) {
+            if ($uniqueId) $query->where('asterisk_uniqueid', $uniqueId);
+            if ($linkedId) $query->orWhere('asterisk_linkedid', $linkedId);
+        })->latest('id')->first();
     }
 
     private function extensionFromChannel(string $channel): ?Extension

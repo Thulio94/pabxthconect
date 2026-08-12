@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('pbx:recordings:purge')->dailyAt('03:15')->withoutOverlapping();
+Schedule::command('pbx:recordings:sync')->everyMinute()->withoutOverlapping();
