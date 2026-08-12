@@ -15,15 +15,26 @@ class ListenForPbxEventsCommand extends Command
     {
         $config = config('pbx.ami');
         $this->info('Ouvindo eventos AMI do PBX.');
+
         while (true) {
+            $socket = null;
             try {
                 $socket = fsockopen($config['host'], $config['port'], $errno, $error, $config['timeout']);
                 if (! $socket) throw new \RuntimeException("AMI indisponível: {$error} ({$errno})");
-                stream_set_timeout($socket, 30);
+
+                stream_set_timeout($socket, 20);
                 $this->readBlock($socket); // AMI banner
-                $this->send($socket, ['Action' => 'Login', 'Username' => $config['username'], 'Secret' => $config['secret'], 'Events' => 'on']);
-                $login = $this->readResponse($socket);
-                if (($login['Response'] ?? null) !== 'Success') throw new \RuntimeException('AMI recusou o listener de eventos.');
+                $this->send($socket, [
+                    'Action' => 'Login',
+                    'Username' => $config['username'],
+                    'Secret' => $config['secret'],
+                    'Events' => 'on',
+                ]);
+                $login = $this->readResponse($socket, $processor);
+                if (($login['Response'] ?? null) !== 'Success') {
+                    throw new \RuntimeException('AMI recusou o listener de eventos: '.($login['Message'] ?? 'sem detalhes'));
+                }
+                $this->info('Listener AMI conectado e autenticado.');
 
                 while (! feof($socket)) {
                     $event = $this->readBlock($socket);
@@ -31,13 +42,22 @@ class ListenForPbxEventsCommand extends Command
 
                     $metadata = stream_get_meta_data($socket);
                     if ($metadata['timed_out'] ?? false) {
-                        throw new \RuntimeException('Conexão AMI ficou inativa e será renovada.');
+                        // Mantém a conexão viva e processa eventos que eventualmente
+                        // cheguem antes da resposta do heartbeat.
+                        $this->send($socket, ['Action' => 'Ping', 'ActionID' => 'thconect-heartbeat']);
+                        $pong = $this->readResponse($socket, $processor);
+                        if (($pong['Response'] ?? null) !== 'Success' || ($pong['Ping'] ?? null) !== 'Pong') {
+                            throw new \RuntimeException('O Asterisk não respondeu ao heartbeat AMI.');
+                        }
                     }
                 }
-                fclose($socket);
+
+                throw new \RuntimeException('O Asterisk encerrou a conexão AMI.');
             } catch (Throwable $exception) {
                 report($exception);
+                $this->error('AMI desconectado: '.$exception->getMessage());
                 $this->warn('Reconectando ao AMI em 5 segundos.');
+                if (is_resource($socket)) fclose($socket);
                 sleep(5);
             }
         }
@@ -61,11 +81,13 @@ class ListenForPbxEventsCommand extends Command
         return $event;
     }
 
-    private function readResponse($socket): array
+    private function readResponse($socket, AmiEventProcessor $processor): array
     {
         do {
             $block = $this->readBlock($socket);
+            if (($block['Event'] ?? null) !== null) $processor->process($block);
         } while (! feof($socket) && ! isset($block['Response']));
+
         return $block;
     }
 }
