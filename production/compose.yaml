@@ -10,7 +10,7 @@ services:
       && chown -R www-data:www-data storage bootstrap/cache
       && php artisan migrate --force
       && php artisan optimize
-      && php artisan pbx:provision
+      && (php artisan pbx:provision || (echo "AMI indisponivel durante a inicializacao; mantendo os arquivos gerados." && php artisan pbx:provision --no-reload))
       && exec php-fpm'
     volumes:
       - app_storage:/var/www/html/storage
@@ -56,10 +56,11 @@ services:
       asterisk:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "php-fpm -t >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "php -r '$$socket = @fsockopen(\"127.0.0.1\", 9000, $$errno, $$error, 2); exit($$socket ? 0 : 1);'"]
       interval: 15s
       timeout: 5s
       retries: 10
+      start_period: 60s
 
   nginx:
     build:

@@ -23,8 +23,7 @@ class ProvisionPbxCommand extends Command
         }
 
         try {
-            $ami->command('module reload res_pjsip.so');
-            $ami->command('dialplan reload');
+            $ami->command('core reload');
             $this->info('Asterisk recarregado.');
         } catch (Throwable $exception) {
             report($exception);

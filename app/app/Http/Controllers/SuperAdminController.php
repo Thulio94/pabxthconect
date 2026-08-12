@@ -237,8 +237,7 @@ class SuperAdminController extends Controller
     {
         app(PbxConfigGenerator::class)->generate();
         if (! app()->environment('testing')) {
-            app(AmiClient::class)->command('module reload res_pjsip.so');
-            app(AmiClient::class)->command('dialplan reload');
+            app(AmiClient::class)->command('core reload');
         }
     }
 }
