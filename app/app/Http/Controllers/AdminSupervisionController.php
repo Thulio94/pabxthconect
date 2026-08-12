@@ -11,6 +11,7 @@ use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
 use App\Models\SupervisionSession;
 use App\Models\Tenant;
+use App\Services\Pbx\CallStateReconciler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -34,7 +35,7 @@ class AdminSupervisionController extends Controller
         ]);
     }
 
-    public function agents(Request $request): JsonResponse
+    public function agents(Request $request, CallStateReconciler $callState): JsonResponse
     {
         $tenantId = $request->validate(['tenant_id' => ['required', Rule::exists('tenants', 'id')]])['tenant_id'];
         $this->authorizeTenant($request, (int) $tenantId);
@@ -45,6 +46,7 @@ class AdminSupervisionController extends Controller
         $extensions = Extension::query()->with(['user:id,name,email', 'presence.pauseReason'])
             ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get();
         $extensionIds = $extensions->pluck('id');
+        $callState->reconcile($extensionIds);
         $calls = CallRecord::query()->whereIn('extension_id', $extensionIds)->where('started_at', '>=', $dayStart)->where('started_at', '<', $dayStart->copy()->addDay())->get()->groupBy('extension_id');
         $sessions = OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
             ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))->get()->groupBy('extension_id');
@@ -131,7 +133,7 @@ class AdminSupervisionController extends Controller
         ]);
     }
 
-    public function supervise(Request $request, Extension $extension): JsonResponse
+    public function supervise(Request $request, Extension $extension, CallStateReconciler $callState): JsonResponse
     {
         $this->authorizeTenant($request, $extension->tenant_id);
         $data = $request->validate([
@@ -139,6 +141,7 @@ class AdminSupervisionController extends Controller
             'supervision_session_id' => ['nullable', 'integer', Rule::exists('supervision_sessions', 'id')],
         ]);
         abort_unless($extension->status === 'active', 422, 'O ramal não está ativo.');
+        $callState->reconcile(collect([$extension->id]));
         $call = CallRecord::query()->where('extension_id', $extension->id)->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->whereIn('status', ['answered', 'ringing', 'dialing'])->latest('id')->first();
         abort_unless($call, 422, 'Este agente não possui uma chamada ativa.');
 

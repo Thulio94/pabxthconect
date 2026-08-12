@@ -6,6 +6,44 @@ use RuntimeException;
 
 class AmiClient
 {
+    /**
+     * @return array<int>|null IDs de ramais com um canal PJSIP ativo. Retorna
+     * null quando o AMI nÃ£o puder ser consultado para evitar falso encerramento.
+     */
+    public function activeExtensionIds(): ?array
+    {
+        $config = config('pbx.ami');
+        if (! $config['username'] || ! $config['secret']) return null;
+
+        $socket = null;
+        try {
+            $socket = @fsockopen($config['host'], $config['port'], $errno, $error, $config['timeout']);
+            if (! $socket) return null;
+            stream_set_timeout($socket, $config['timeout']);
+            $this->send($socket, ['Action' => 'Login', 'Username' => $config['username'], 'Secret' => $config['secret'], 'Events' => 'off']);
+            if (! str_contains($this->readResponse($socket), 'Response: Success')) return null;
+
+            $this->send($socket, ['Action' => 'CoreShowChannels']);
+            $extensions = [];
+            while (! feof($socket)) {
+                $block = $this->readHeaders($socket);
+                if (($block['Event'] ?? null) === 'CoreShowChannelsComplete') break;
+                if (($block['Event'] ?? null) !== 'CoreShowChannel') continue;
+                if (preg_match('/PJSIP\\/t\\d+-e(\\d+)-/', $block['Channel'] ?? '', $matches)) {
+                    $extensions[] = (int) $matches[1];
+                }
+            }
+            return array_values(array_unique($extensions));
+        } catch (\Throwable) {
+            return null;
+        } finally {
+            if (is_resource($socket)) {
+                $this->send($socket, ['Action' => 'Logoff']);
+                fclose($socket);
+            }
+        }
+    }
+
     public function command(string $command): void
     {
         $config = config('pbx.ami');
@@ -55,6 +93,18 @@ class AmiClient
         }
 
         return '';
+    }
+
+    private function readHeaders($socket): array
+    {
+        $headers = [];
+        while (! feof($socket)) {
+            $line = fgets($socket);
+            if ($line === false || trim($line) === '') break;
+            [$key, $value] = array_pad(explode(':', trim($line), 2), 2, null);
+            if ($key && $value !== null) $headers[$key] = ltrim($value);
+        }
+        return $headers;
     }
 
     private function assertSuccess(string $response, string $action): void

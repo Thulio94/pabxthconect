@@ -42,6 +42,22 @@ class AdminSupervisionTest extends TestCase
         $this->assertDatabaseHas('supervision_sessions', ['id' => $sessionId, 'call_record_id' => $replacement->id, 'mode' => 'listen', 'status' => 'active']);
     }
 
+    public function test_expired_ringing_call_is_not_shown_as_calling(): void
+    {
+        $tenant = Tenant::create(['name' => 'OperaÃ§Ã£o A', 'slug' => 'operacao-a', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81999999999', 'status' => 'ringing', 'started_at' => now()->subMinutes(3)]);
+
+        $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
+            ->assertOk()->assertJsonPath('agents.0.state', 'available');
+
+        $this->assertDatabaseHas('call_records', ['id' => $call->id, 'status' => 'failed']);
+        $this->assertNotNull($call->fresh()->ended_at);
+    }
+
     public function test_pauses_are_scoped_to_company_and_agent_can_change_presence(): void
     {
         $tenant = Tenant::create(['name' => 'Operação A', 'slug' => 'operacao-a', 'status' => 'active']);
