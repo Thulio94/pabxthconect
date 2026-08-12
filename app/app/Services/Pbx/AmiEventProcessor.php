@@ -67,7 +67,15 @@ class AmiEventProcessor
 
     private function hangup(array $event): void
     {
-        $call = CallRecord::query()->where('asterisk_uniqueid', $event['Uniqueid'] ?? null)->first();
+        $uniqueId = $event['Uniqueid'] ?? null;
+        $linkedId = $event['Linkedid'] ?? null;
+        $call = CallRecord::query()
+            ->where(function ($query) use ($uniqueId, $linkedId) {
+                if ($uniqueId) $query->where('asterisk_uniqueid', $uniqueId);
+                if ($linkedId) $query->orWhere('asterisk_linkedid', $linkedId);
+            })
+            ->latest('id')
+            ->first();
         if (! $call || $call->ended_at) return;
         $endedAt = now();
         $call->update([
@@ -77,8 +85,17 @@ class AmiEventProcessor
             'hangup_cause' => $event['Cause-txt'] ?? $event['Cause'] ?? null,
         ]);
         $recording = $call->recording;
-        if ($recording && Storage::disk($recording->storage_disk)->exists($recording->path)) {
-            $recording->update(['size_bytes' => Storage::disk($recording->storage_disk)->size($recording->path), 'available_at' => now()]);
+        if ($recording) {
+            $disk = Storage::disk($recording->storage_disk);
+            // MixMonitor fecha o WAV logo após o Hangup; aguarde brevemente para
+            // evitar que o evento AMI vença a gravação na corrida de finalização.
+            for ($attempt = 0; $attempt < 10 && ! $disk->exists($recording->path); $attempt++) {
+                usleep(100_000);
+            }
+            if ($disk->exists($recording->path)) {
+                clearstatcache(true, $disk->path($recording->path));
+                $recording->update(['size_bytes' => $disk->size($recording->path), 'available_at' => now()]);
+            }
         }
     }
 

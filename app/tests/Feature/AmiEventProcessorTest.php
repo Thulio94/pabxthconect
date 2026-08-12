@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\SipTrunk;
 use App\Models\Tenant;
@@ -34,5 +35,25 @@ class AmiEventProcessorTest extends TestCase
         $this->assertDatabaseHas('call_records', ['asterisk_uniqueid' => $uniqueId, 'extension_id' => $extension->id, 'sip_trunk_id' => $trunk->id, 'status' => 'completed']);
         $this->assertDatabaseHas('recordings', ['path' => "tenant-{$tenant->id}/{$uniqueId}.wav"]);
         $this->assertNotNull($tenant->fresh()->extensions()->first()->calls()->first()->recording->available_at);
+    }
+
+    public function test_trunk_leg_hangup_finishes_call_using_linked_id(): void
+    {
+        Storage::fake('pbx_recordings');
+        $tenant = Tenant::create(['name' => 'Empresa Linkedid', 'slug' => 'empresa-linkedid', 'status' => 'active', 'record_calls' => true]);
+        $user = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'segredo', 'status' => 'active']);
+        $processor = app(AmiEventProcessor::class);
+        $linkedId = '1723480000.10';
+
+        $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000010", 'Uniqueid' => $linkedId, 'Linkedid' => $linkedId, 'Exten' => '5511999990000']);
+        $processor->process(['Event' => 'BridgeEnter', 'Channel' => "PJSIP/{$extension->sip_username}-00000010", 'Uniqueid' => $linkedId]);
+        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$linkedId}.wav", 'audio');
+        $processor->process(['Event' => 'Hangup', 'Uniqueid' => '1723480000.11', 'Linkedid' => $linkedId, 'Cause-txt' => 'Normal Clearing']);
+
+        $call = CallRecord::where('asterisk_linkedid', $linkedId)->firstOrFail();
+        $this->assertSame('completed', $call->status);
+        $this->assertNotNull($call->ended_at);
+        $this->assertNotNull($call->recording?->available_at);
     }
 }

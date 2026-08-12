@@ -28,6 +28,11 @@ class ListenForPbxEventsCommand extends Command
                 while (! feof($socket)) {
                     $event = $this->readBlock($socket);
                     if (($event['Event'] ?? null) !== null) $processor->process($event);
+
+                    $metadata = stream_get_meta_data($socket);
+                    if ($metadata['timed_out'] ?? false) {
+                        throw new \RuntimeException('Conexão AMI ficou inativa e será renovada.');
+                    }
                 }
                 fclose($socket);
             } catch (Throwable $exception) {
