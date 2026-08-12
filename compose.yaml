@@ -1,0 +1,210 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs && chown -R www-data:www-data storage && exec php-fpm'
+    volumes:
+      - ./app:/var/www/html
+      - app_vendor:/var/www/html/vendor
+      - app_storage:/var/www/html/storage
+      - ./asterisk/runtime:/var/www/html/storage/app/pbx-runtime
+      - asterisk_recordings:/var/www/html/storage/app/pbx-recordings
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-tela_agente}
+      DB_USERNAME: ${DB_USERNAME:-tela_agente}
+      DB_PASSWORD: ${DB_PASSWORD:-change-me-local}
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      SESSION_ENCRYPT: "true"
+      REDIS_HOST: redis
+      PBX_AMI_HOST: asterisk
+      PBX_AMI_PORT: 5038
+      PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:-laravel-local}
+      PBX_AMI_SECRET: ${PBX_AMI_SECRET:-change-me-local}
+      PBX_SIP_DOMAIN: ${PBX_SIP_DOMAIN:-localhost}
+      PBX_WEBSOCKET_URL: ${PBX_WEBSOCKET_URL:-ws://localhost:8088/asterisk/ws}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./app:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+  queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs && chown -R www-data:www-data storage && exec php artisan queue:work --sleep=1 --tries=3 --timeout=90'
+    volumes:
+      - ./app:/var/www/html
+      - app_vendor:/var/www/html/vendor
+      - app_storage:/var/www/html/storage
+      - ./asterisk/runtime:/var/www/html/storage/app/pbx-runtime
+      - asterisk_recordings:/var/www/html/storage/app/pbx-recordings
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: "false"
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-tela_agente}
+      DB_USERNAME: ${DB_USERNAME:-tela_agente}
+      DB_PASSWORD: ${DB_PASSWORD:-change-me-local}
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      SESSION_ENCRYPT: "true"
+      REDIS_HOST: redis
+      PBX_AMI_HOST: asterisk
+      PBX_AMI_PORT: 5038
+      PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:-laravel-local}
+      PBX_AMI_SECRET: ${PBX_AMI_SECRET:-change-me-local}
+      PBX_SIP_DOMAIN: ${PBX_SIP_DOMAIN:-localhost}
+      PBX_WEBSOCKET_URL: ${PBX_WEBSOCKET_URL:-ws://localhost:8088/asterisk/ws}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  pbx-events:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/app/pbx-recordings storage/logs && chown -R www-data:www-data storage && exec php artisan pbx:events'
+    volumes:
+      - ./app:/var/www/html
+      - app_vendor:/var/www/html/vendor
+      - app_storage:/var/www/html/storage
+      - asterisk_recordings:/var/www/html/storage/app/pbx-recordings
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: "false"
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-tela_agente}
+      DB_USERNAME: ${DB_USERNAME:-tela_agente}
+      DB_PASSWORD: ${DB_PASSWORD:-change-me-local}
+      PBX_AMI_HOST: asterisk
+      PBX_AMI_PORT: 5038
+      PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:-laravel-local}
+      PBX_AMI_SECRET: ${PBX_AMI_SECRET:-change-me-local}
+    depends_on:
+      asterisk:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/app/pbx-recordings storage/logs && chown -R www-data:www-data storage && exec php artisan schedule:work'
+    volumes:
+      - ./app:/var/www/html
+      - app_vendor:/var/www/html/vendor
+      - app_storage:/var/www/html/storage
+      - asterisk_recordings:/var/www/html/storage/app/pbx-recordings
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: "false"
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-tela_agente}
+      DB_USERNAME: ${DB_USERNAME:-tela_agente}
+      DB_PASSWORD: ${DB_PASSWORD:-change-me-local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  assets:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./app:/app
+      - assets_node_modules:/app/node_modules
+    command: sh -lc 'npm install --no-audit --no-fund && npm run build'
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-tela_agente}
+      POSTGRES_USER: ${DB_USERNAME:-tela_agente}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-local}
+    ports:
+      - "${POSTGRES_PORT:-54329}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tela_agente -d tela_agente"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-63799}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  mailpit:
+    image: axllent/mailpit:v1.22
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  asterisk:
+    build:
+      context: .
+      dockerfile: docker/asterisk/Dockerfile
+    hostname: thconect-pbx-local
+    environment:
+      PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:-laravel-local}
+      PBX_AMI_SECRET: ${PBX_AMI_SECRET:-change-me-local}
+    ports:
+      - "5060:5060/udp"
+      - "8088:8088"
+      - "10000-10100:10000-10100/udp"
+    volumes:
+      - ./docker/asterisk/config:/etc/asterisk:ro
+      - ./asterisk/runtime:/etc/asterisk/generated
+      - asterisk_recordings:/var/spool/asterisk/monitor
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core show uptime' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:
+  app_storage:
+  app_vendor:
+  assets_node_modules:
+  asterisk_recordings:

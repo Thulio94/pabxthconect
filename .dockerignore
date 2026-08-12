@@ -1,0 +1,8 @@
+.git
+.env
+app/.env
+app/node_modules
+app/vendor
+app/public/build
+app/storage/logs
+app/storage/framework

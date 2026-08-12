@@ -1,0 +1,56 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\SipTrunk;
+use App\Models\Tenant;
+use App\Models\User;
+use App\Services\Pbx\ExtensionAllocator;
+use App\Services\Pbx\PbxConfigGenerator;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
+use Tests\TestCase;
+
+class PbxProvisioningTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_it_allocates_sequential_tenant_extensions_and_generates_tech_dialplan(): void
+    {
+        $runtime = storage_path('framework/testing/pbx-runtime');
+        File::deleteDirectory($runtime);
+        config(['pbx.runtime_path' => $runtime]);
+
+        $tenant = Tenant::create(['name' => 'Empresa PBX', 'slug' => 'empresa-pbx', 'status' => 'active']);
+        $trunk = SipTrunk::create([
+            'name' => 'Rota TECH', 'auth_mode' => 'ip_tech', 'host' => '10.10.10.10',
+            'tech_prefix' => '8033', 'is_active' => true,
+        ]);
+        $tenant->trunks()->attach($trunk, ['priority' => 1, 'is_active' => true]);
+
+        $first = User::factory()->create(['tenant_id' => $tenant->id]);
+        $second = User::factory()->create(['tenant_id' => $tenant->id]);
+        $allocator = app(ExtensionAllocator::class);
+
+        $firstExtension = $allocator->allocate($first);
+        $secondExtension = $allocator->allocate($second);
+
+        $otherTenant = Tenant::create(['name' => 'Outra Empresa', 'slug' => 'outra-empresa', 'status' => 'active']);
+        $otherUser = User::factory()->create(['tenant_id' => $otherTenant->id]);
+        $otherExtension = $allocator->allocate($otherUser);
+
+        $this->assertSame(999, $firstExtension->number);
+        $this->assertSame(1000, $secondExtension->number);
+        $this->assertSame(999, $otherExtension->number);
+        $this->assertSame("t{$tenant->id}-e999", $firstExtension->sip_username);
+
+        app(PbxConfigGenerator::class)->generate();
+
+        $endpoints = File::get($runtime.'/pjsip_endpoints.conf');
+        $dialplan = File::get($runtime.'/extensions_tenants.conf');
+        $this->assertStringContainsString("[{$firstExtension->sip_username}]", $endpoints);
+        $this->assertStringContainsString('identify_by=username,auth_username', $endpoints);
+        $this->assertStringContainsString('Dial(PJSIP/8033${EXTEN}@trunk-'.$trunk->id.',60,g)', $dialplan);
+        $this->assertStringNotContainsString($firstExtension->sip_secret, $dialplan);
+    }
+}

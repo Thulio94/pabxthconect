@@ -1,0 +1,6 @@
+/asterisk/runtime/*.conf
+/asterisk/runtime/*.tmp
+/asterisk/runtime/manager_credentials.conf
+/docker/asterisk/config/generated/*.conf
+/docker/asterisk/config/generated/*.tmp
+/.env
