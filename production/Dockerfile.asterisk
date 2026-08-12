@@ -1,0 +1,7 @@
+FROM andrius/asterisk:20@sha256:c0a992ca8e0ee3f93b35250bb9c788fe19120be427250027d86c602597adafaa
+COPY docker/asterisk/config /etc/asterisk
+COPY production/asterisk/pjsip.conf.template /etc/asterisk/pjsip.conf.template
+COPY production/asterisk/entrypoint.sh /usr/local/bin/thconect-production-entrypoint
+RUN chmod 0755 /usr/local/bin/thconect-production-entrypoint
+ENTRYPOINT ["/usr/local/bin/thconect-production-entrypoint"]
+CMD ["asterisk", "-f", "-vvv"]

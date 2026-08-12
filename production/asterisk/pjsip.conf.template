@@ -1,0 +1,22 @@
+[global]
+user_agent = Thconect PBX
+endpoint_identifier_order = auth_username,username,ip,anonymous
+
+[transport-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0:5060
+external_signaling_address = __PBX_PUBLIC_IP__
+external_media_address = __PBX_PUBLIC_IP__
+local_net = __PBX_LOCAL_NET__
+
+[transport-ws]
+type = transport
+protocol = ws
+bind = 0.0.0.0
+external_signaling_address = __PBX_PUBLIC_IP__
+external_media_address = __PBX_PUBLIC_IP__
+local_net = __PBX_LOCAL_NET__
+
+#include "generated/pjsip_endpoints.conf"
+#include "generated/pjsip_trunks.conf"

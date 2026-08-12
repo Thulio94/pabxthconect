@@ -1,0 +1,493 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: >-
+      sh -lc 'mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs storage/app/pbx-runtime storage/app/pbx-recordings
+      && chown -R www-data:www-data storage bootstrap/cache
+      && php artisan migrate --force
+      && php artisan optimize
+      && php artisan pbx:provision
+      && exec php-fpm'
+    volumes:
+      - app_storage:/var/www/html/storage
+      - pbx_runtime:/var/www/html/storage/app/pbx-runtime
+      - pbx_recordings:/var/www/html/storage/app/pbx-recordings
+    environment: &laravel_environment
+      APP_NAME: ${APP_NAME:-Tela do Agente - Thconect}
+      APP_ENV: production
+      APP_KEY: ${APP_KEY:?Defina APP_KEY no Easypanel}
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL:?Defina APP_URL no Easypanel}
+      APP_LOCALE: pt_BR
+      LOG_CHANNEL: stack
+      LOG_LEVEL: ${LOG_LEVEL:-warning}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:?Defina DB_DATABASE no Easypanel}
+      DB_USERNAME: ${DB_USERNAME:?Defina DB_USERNAME no Easypanel}
+      DB_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD no Easypanel}
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      SESSION_ENCRYPT: "true"
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Defina REDIS_PASSWORD no Easypanel}
+      FILESYSTEM_DISK: local
+      PBX_RUNTIME_PATH: /var/www/html/storage/app/pbx-runtime
+      PBX_AMI_HOST: asterisk
+      PBX_AMI_PORT: 5038
+      PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:?Defina PBX_AMI_USERNAME no Easypanel}
+      PBX_AMI_SECRET: ${PBX_AMI_SECRET:?Defina PBX_AMI_SECRET no Easypanel}
+      PBX_SIP_DOMAIN: ${PBX_SIP_DOMAIN:?Defina PBX_SIP_DOMAIN no Easypanel}
+      PBX_WEBSOCKET_URL: ${PBX_WEBSOCKET_URL:?Defina PBX_WEBSOCKET_URL no Easypanel}
+      MAIL_MAILER: log
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      asterisk:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm -t >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/up >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  queue:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs && chown -R www-data:www-data storage bootstrap/cache && exec php artisan queue:work --sleep=1 --tries=3 --timeout=90 --max-time=3600'
+    volumes:
+      - app_storage:/var/www/html/storage
+      - pbx_runtime:/var/www/html/storage/app/pbx-runtime
+      - pbx_recordings:/var/www/html/storage/app/pbx-recordings
+    environment: *laravel_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/logs storage/app/pbx-recordings && chown -R www-data:www-data storage bootstrap/cache && exec php artisan schedule:work'
+    volumes:
+      - app_storage:/var/www/html/storage
+      - pbx_runtime:/var/www/html/storage/app/pbx-runtime
+      - pbx_recordings:/var/www/html/storage/app/pbx-recordings
+    environment: *laravel_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  pbx-events:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: sh -lc 'mkdir -p storage/logs storage/app/pbx-recordings && chown -R www-data:www-data storage bootstrap/cache && exec php artisan pbx:events'
+    volumes:
+      - app_storage:/var/www/html/storage
+      - pbx_runtime:/var/www/html/storage/app/pbx-runtime
+      - pbx_recordings:/var/www/html/storage/app/pbx-recordings
+    environment: *laravel_environment
+    depends_on:
+      asterisk:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:?Defina DB_DATABASE no Easypanel}
+      POSTGRES_USER: ${DB_USERNAME:?Defina DB_USERNAME no Easypanel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD no Easypanel}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["sh", "-lc", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Defina REDIS_PASSWORD no Easypanel}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  asterisk:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.asterisk
+    restart: unless-stopped
+    hostname: thconect-pbx
+    environment:
+      PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:?Defina PBX_AMI_USERNAME no Easypanel}
+      PBX_AMI_SECRET: ${PBX_AMI_SECRET:?Defina PBX_AMI_SECRET no Easypanel}
+      PBX_PUBLIC_IP: ${PBX_PUBLIC_IP:?Defina PBX_PUBLIC_IP no Easypanel}
+      PBX_LOCAL_NET: ${PBX_LOCAL_NET:-10.0.0.0/8}
+    ports:
+      - target: 5060
+        published: 5060
+        protocol: udp
+      - target: 10000
+        published: 10000
+        protocol: udp
+      - target: 10001
+        published: 10001
+        protocol: udp
+      - target: 10002
+        published: 10002
+        protocol: udp
+      - target: 10003
+        published: 10003
+        protocol: udp
+      - target: 10004
+        published: 10004
+        protocol: udp
+      - target: 10005
+        published: 10005
+        protocol: udp
+      - target: 10006
+        published: 10006
+        protocol: udp
+      - target: 10007
+        published: 10007
+        protocol: udp
+      - target: 10008
+        published: 10008
+        protocol: udp
+      - target: 10009
+        published: 10009
+        protocol: udp
+      - target: 10010
+        published: 10010
+        protocol: udp
+      - target: 10011
+        published: 10011
+        protocol: udp
+      - target: 10012
+        published: 10012
+        protocol: udp
+      - target: 10013
+        published: 10013
+        protocol: udp
+      - target: 10014
+        published: 10014
+        protocol: udp
+      - target: 10015
+        published: 10015
+        protocol: udp
+      - target: 10016
+        published: 10016
+        protocol: udp
+      - target: 10017
+        published: 10017
+        protocol: udp
+      - target: 10018
+        published: 10018
+        protocol: udp
+      - target: 10019
+        published: 10019
+        protocol: udp
+      - target: 10020
+        published: 10020
+        protocol: udp
+      - target: 10021
+        published: 10021
+        protocol: udp
+      - target: 10022
+        published: 10022
+        protocol: udp
+      - target: 10023
+        published: 10023
+        protocol: udp
+      - target: 10024
+        published: 10024
+        protocol: udp
+      - target: 10025
+        published: 10025
+        protocol: udp
+      - target: 10026
+        published: 10026
+        protocol: udp
+      - target: 10027
+        published: 10027
+        protocol: udp
+      - target: 10028
+        published: 10028
+        protocol: udp
+      - target: 10029
+        published: 10029
+        protocol: udp
+      - target: 10030
+        published: 10030
+        protocol: udp
+      - target: 10031
+        published: 10031
+        protocol: udp
+      - target: 10032
+        published: 10032
+        protocol: udp
+      - target: 10033
+        published: 10033
+        protocol: udp
+      - target: 10034
+        published: 10034
+        protocol: udp
+      - target: 10035
+        published: 10035
+        protocol: udp
+      - target: 10036
+        published: 10036
+        protocol: udp
+      - target: 10037
+        published: 10037
+        protocol: udp
+      - target: 10038
+        published: 10038
+        protocol: udp
+      - target: 10039
+        published: 10039
+        protocol: udp
+      - target: 10040
+        published: 10040
+        protocol: udp
+      - target: 10041
+        published: 10041
+        protocol: udp
+      - target: 10042
+        published: 10042
+        protocol: udp
+      - target: 10043
+        published: 10043
+        protocol: udp
+      - target: 10044
+        published: 10044
+        protocol: udp
+      - target: 10045
+        published: 10045
+        protocol: udp
+      - target: 10046
+        published: 10046
+        protocol: udp
+      - target: 10047
+        published: 10047
+        protocol: udp
+      - target: 10048
+        published: 10048
+        protocol: udp
+      - target: 10049
+        published: 10049
+        protocol: udp
+      - target: 10050
+        published: 10050
+        protocol: udp
+      - target: 10051
+        published: 10051
+        protocol: udp
+      - target: 10052
+        published: 10052
+        protocol: udp
+      - target: 10053
+        published: 10053
+        protocol: udp
+      - target: 10054
+        published: 10054
+        protocol: udp
+      - target: 10055
+        published: 10055
+        protocol: udp
+      - target: 10056
+        published: 10056
+        protocol: udp
+      - target: 10057
+        published: 10057
+        protocol: udp
+      - target: 10058
+        published: 10058
+        protocol: udp
+      - target: 10059
+        published: 10059
+        protocol: udp
+      - target: 10060
+        published: 10060
+        protocol: udp
+      - target: 10061
+        published: 10061
+        protocol: udp
+      - target: 10062
+        published: 10062
+        protocol: udp
+      - target: 10063
+        published: 10063
+        protocol: udp
+      - target: 10064
+        published: 10064
+        protocol: udp
+      - target: 10065
+        published: 10065
+        protocol: udp
+      - target: 10066
+        published: 10066
+        protocol: udp
+      - target: 10067
+        published: 10067
+        protocol: udp
+      - target: 10068
+        published: 10068
+        protocol: udp
+      - target: 10069
+        published: 10069
+        protocol: udp
+      - target: 10070
+        published: 10070
+        protocol: udp
+      - target: 10071
+        published: 10071
+        protocol: udp
+      - target: 10072
+        published: 10072
+        protocol: udp
+      - target: 10073
+        published: 10073
+        protocol: udp
+      - target: 10074
+        published: 10074
+        protocol: udp
+      - target: 10075
+        published: 10075
+        protocol: udp
+      - target: 10076
+        published: 10076
+        protocol: udp
+      - target: 10077
+        published: 10077
+        protocol: udp
+      - target: 10078
+        published: 10078
+        protocol: udp
+      - target: 10079
+        published: 10079
+        protocol: udp
+      - target: 10080
+        published: 10080
+        protocol: udp
+      - target: 10081
+        published: 10081
+        protocol: udp
+      - target: 10082
+        published: 10082
+        protocol: udp
+      - target: 10083
+        published: 10083
+        protocol: udp
+      - target: 10084
+        published: 10084
+        protocol: udp
+      - target: 10085
+        published: 10085
+        protocol: udp
+      - target: 10086
+        published: 10086
+        protocol: udp
+      - target: 10087
+        published: 10087
+        protocol: udp
+      - target: 10088
+        published: 10088
+        protocol: udp
+      - target: 10089
+        published: 10089
+        protocol: udp
+      - target: 10090
+        published: 10090
+        protocol: udp
+      - target: 10091
+        published: 10091
+        protocol: udp
+      - target: 10092
+        published: 10092
+        protocol: udp
+      - target: 10093
+        published: 10093
+        protocol: udp
+      - target: 10094
+        published: 10094
+        protocol: udp
+      - target: 10095
+        published: 10095
+        protocol: udp
+      - target: 10096
+        published: 10096
+        protocol: udp
+      - target: 10097
+        published: 10097
+        protocol: udp
+      - target: 10098
+        published: 10098
+        protocol: udp
+      - target: 10099
+        published: 10099
+        protocol: udp
+      - target: 10100
+        published: 10100
+        protocol: udp
+    volumes:
+      - pbx_runtime:/etc/asterisk/generated
+      - pbx_recordings:/var/spool/asterisk/monitor
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core show uptime' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_storage:
+  pbx_runtime:
+  pbx_recordings:
