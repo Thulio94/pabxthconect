@@ -33,6 +33,13 @@ class AdminSupervisionTest extends TestCase
         $this->actingAs($admin)->postJson('/administracao/acompanhamento/ramais/'.$extension->id, ['mode' => 'whisper'])
             ->assertOk()->assertJsonPath('dial_number', '*82'.$extension->id);
         $this->assertDatabaseHas('supervision_sessions', ['supervisor_user_id' => $admin->id, 'target_extension_id' => $extension->id, 'call_record_id' => $call->id, 'mode' => 'whisper']);
+
+        $sessionId = \App\Models\SupervisionSession::firstOrFail()->id;
+        $replacement = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81888888888', 'status' => 'answered', 'started_at' => now(), 'answered_at' => now()]);
+        $this->actingAs($admin)->postJson('/administracao/acompanhamento/ramais/'.$extension->id, ['mode' => 'listen', 'supervision_session_id' => $sessionId])
+            ->assertOk()->assertJsonPath('session_id', $sessionId)->assertJsonPath('call_id', $replacement->id);
+        $this->assertDatabaseCount('supervision_sessions', 1);
+        $this->assertDatabaseHas('supervision_sessions', ['id' => $sessionId, 'call_record_id' => $replacement->id, 'mode' => 'listen', 'status' => 'active']);
     }
 
     public function test_pauses_are_scoped_to_company_and_agent_can_change_presence(): void

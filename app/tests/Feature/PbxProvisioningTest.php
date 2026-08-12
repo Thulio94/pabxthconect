@@ -53,6 +53,11 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString('Dial(PJSIP/8033${EXTEN}@trunk-'.$trunk->id.',60,g)', $dialplan);
         $this->assertStringContainsString("Outbound blocked for tenant administrator {$secondExtension->id}", $dialplan);
         $this->assertStringContainsString("exten => *81{$firstExtension->id},1,NoOp(Listen {$firstExtension->id} by {$secondExtension->id})", $dialplan);
+        $this->assertStringContainsString("ChanSpy(PJSIP,qbg(extension-{$firstExtension->id}))", $dialplan);
+        $this->assertStringContainsString("ChanSpy(PJSIP,qbwg(extension-{$firstExtension->id}))", $dialplan);
+        $this->assertStringContainsString("ChanSpy(PJSIP,qbBg(extension-{$firstExtension->id}))", $dialplan);
+        $this->assertStringContainsString("Set(__SPYGROUP=extension-{$firstExtension->id})", $dialplan);
+        $this->assertStringNotContainsString('qEg(', $dialplan);
         $this->assertStringNotContainsString($firstExtension->sip_secret, $dialplan);
     }
 }

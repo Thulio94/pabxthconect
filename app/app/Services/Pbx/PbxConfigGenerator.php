@@ -90,13 +90,13 @@ class PbxConfigGenerator
                 ? $allExtensions
                 : $allExtensions->where('tenant_id', $extension->tenant_id));
             $supervision = $targets->flatMap(fn (Extension $target) => [
-                "exten => *81{$target->id},1,NoOp(Listen {$target->id} by {$extension->id})\n same => n,ChanSpy(PJSIP,qEg(extension-{$target->id}))\n same => n,Hangup()\n",
-                "exten => *82{$target->id},1,NoOp(Whisper {$target->id} by {$extension->id})\n same => n,ChanSpy(PJSIP,qwEg(extension-{$target->id}))\n same => n,Hangup()\n",
-                "exten => *83{$target->id},1,NoOp(Barge {$target->id} by {$extension->id})\n same => n,ChanSpy(PJSIP,qBEg(extension-{$target->id}))\n same => n,Hangup()\n",
+                "exten => *81{$target->id},1,NoOp(Listen {$target->id} by {$extension->id})\n same => n,Answer()\n same => n,ChanSpy(PJSIP,qbg(extension-{$target->id}))\n same => n,Hangup()\n",
+                "exten => *82{$target->id},1,NoOp(Whisper {$target->id} by {$extension->id})\n same => n,Answer()\n same => n,ChanSpy(PJSIP,qbwg(extension-{$target->id}))\n same => n,Hangup()\n",
+                "exten => *83{$target->id},1,NoOp(Barge {$target->id} by {$extension->id})\n same => n,Answer()\n same => n,ChanSpy(PJSIP,qbBg(extension-{$target->id}))\n same => n,Hangup()\n",
             ])->implode('');
             $outbound = $extension->user?->isTenantAdmin()
                 ? "exten => _X.,1,NoOp(Outbound blocked for tenant administrator {$extension->id})\n same => n,Hangup(21)\n"
-                : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
+                : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Set(__SPYGROUP=extension-{$extension->id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
             return "[extension-{$extension->id}]\n{$supervision}{$outbound}\n";
         })->implode('');
         return $tenantContexts.$extensionContexts;

@@ -134,23 +134,40 @@ class AdminSupervisionController extends Controller
     public function supervise(Request $request, Extension $extension): JsonResponse
     {
         $this->authorizeTenant($request, $extension->tenant_id);
-        $data = $request->validate(['mode' => ['required', Rule::in(['listen', 'whisper', 'barge'])]]);
+        $data = $request->validate([
+            'mode' => ['required', Rule::in(['listen', 'whisper', 'barge'])],
+            'supervision_session_id' => ['nullable', 'integer', Rule::exists('supervision_sessions', 'id')],
+        ]);
         abort_unless($extension->status === 'active', 422, 'O ramal não está ativo.');
         $call = CallRecord::query()->where('extension_id', $extension->id)->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->whereIn('status', ['answered', 'ringing', 'dialing'])->latest('id')->first();
         abort_unless($call, 422, 'Este agente não possui uma chamada ativa.');
 
-        $session = SupervisionSession::create([
-            'supervisor_user_id' => $request->user()->id,
-            'target_extension_id' => $extension->id,
-            'call_record_id' => $call->id,
-            'mode' => $data['mode'],
-            'ip_address' => $request->ip(),
-            'user_agent' => mb_substr((string) $request->userAgent(), 0, 500),
-            'started_at' => now(),
-        ]);
+        $session = isset($data['supervision_session_id'])
+            ? SupervisionSession::query()->whereKey($data['supervision_session_id'])
+                ->where('supervisor_user_id', $request->user()->id)
+                ->where('target_extension_id', $extension->id)
+                ->whereNull('ended_at')->firstOrFail()
+            : null;
+
+        if ($session) {
+            $session->update(['call_record_id' => $call->id, 'mode' => $data['mode'], 'status' => 'active']);
+        } else {
+            $session = SupervisionSession::create([
+                'supervisor_user_id' => $request->user()->id,
+                'target_extension_id' => $extension->id,
+                'call_record_id' => $call->id,
+                'mode' => $data['mode'],
+                'status' => 'active',
+                'ip_address' => $request->ip(),
+                'user_agent' => mb_substr((string) $request->userAgent(), 0, 500),
+                'started_at' => now(),
+            ]);
+        }
 
         return response()->json([
             'session_id' => $session->id,
+            'call_id' => $call->id,
+            'mode' => $data['mode'],
             'dial_number' => '*8'.match ($data['mode']) {'listen' => '1', 'whisper' => '2', 'barge' => '3'}.$extension->id,
             'message' => match ($data['mode']) {
                 'listen' => 'Escuta iniciada. A ação foi registrada na auditoria.',

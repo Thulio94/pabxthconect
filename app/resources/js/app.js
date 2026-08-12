@@ -1499,9 +1499,17 @@ if (supervisionConfig) {
     const dayCards = document.querySelector('#operatorDayCards');
     const pauseBreakdown = document.querySelector('#operatorPauseBreakdown');
     const operatorTimeline = document.querySelector('#operatorTimeline');
+    const spyConsole = document.querySelector('#spyConsole');
+    const spyAgentName = document.querySelector('#spyAgentName');
+    const spyConsoleKicker = document.querySelector('#spyConsoleKicker');
+    const spyConsoleStatus = document.querySelector('#spyConsoleStatus');
+    const spyOpenDetails = document.querySelector('#spyOpenDetails');
+    const spyExit = document.querySelector('#spyExit');
     let agents = [];
     let activeSession = null;
     let activeAuditId = null;
+    let activeSpy = null;
+    let startingSpy = false;
     let toastTimer = null;
     let selectedOperator = null;
 
@@ -1541,7 +1549,7 @@ if (supervisionConfig) {
             const pauseCell = node('td', 'metric-cell', duration(agent.pause_seconds));
             const actionCell = node('td'); const actions = node('div', 'supervision-actions');
             const details = node('button', 'supervision-action details', 'Ver dia'); details.type = 'button'; details.addEventListener('click', () => openOperatorDay(agent)); actions.append(details);
-            [['listen','Ouvir'],['whisper','Sussurrar'],['barge','Entrar']].forEach(([mode,label]) => { const button = node('button', `supervision-action ${mode}`, label); button.type = 'button'; button.disabled = agent.state !== 'talking' || !ua.isRegistered() || Boolean(activeSession); button.addEventListener('click', () => startSupervision(agent, mode)); actions.append(button); });
+            [['listen','Ouvir'],['whisper','Sussurrar'],['barge','Entrar']].forEach(([mode,label]) => { const button = node('button', `supervision-action ${mode}`, label); button.type = 'button'; button.disabled = agent.state !== 'talking' || !ua.isRegistered() || startingSpy; button.addEventListener('click', () => startSupervision(agent, mode)); actions.append(button); });
             actionCell.append(actions); row.append(identityCell, statusCell, loggedCell, callsCell, talkCell, pauseCell, actionCell); tableBody.append(row);
         });
     };
@@ -1569,7 +1577,15 @@ if (supervisionConfig) {
     };
     const openOperatorDay = (agent) => { selectedOperator = agent; dayDrawer.hidden = false; dayBackdrop.hidden = false; loadOperatorDay(); };
     const loadAgents = async () => {
-        try { agents = (await request(`${supervisionConfig.agentsUrl}?tenant_id=${encodeURIComponent(tenantSelect.value)}`)).agents; render(); }
+        try {
+            agents = (await request(`${supervisionConfig.agentsUrl}?tenant_id=${encodeURIComponent(tenantSelect.value)}`)).agents;
+            const currentTarget = activeSpy && agents.find((agent) => agent.id === activeSpy.agent.id);
+            if (currentTarget && activeSpy) activeSpy.agent = currentTarget;
+            if (currentTarget?.state === 'talking' && currentTarget.call?.id && activeSpy && !activeSession && !startingSpy && currentTarget.call.id !== activeSpy.callId && ua.isRegistered()) {
+                startSupervision(currentTarget, activeSpy.mode, { reconnect: true });
+            }
+            renderSpyConsole(); render();
+        }
         catch (error) { notify(`Não foi possível atualizar os agentes: ${error.message}`); }
     };
     const finishAudit = async () => {
@@ -1577,7 +1593,7 @@ if (supervisionConfig) {
         const id = activeAuditId; activeAuditId = null;
         await request(`${supervisionConfig.finishUrl}/${id}`, { method: 'PATCH' }).catch(() => {});
     };
-    const startSupervision = async (agent, mode) => {
+    const legacyStartSupervision = async (agent, mode) => {
         const labels = { listen: 'ouvir silenciosamente', whisper: 'sussurrar para o agente', barge: 'entrar na ligação' };
         if (!window.confirm(`Confirma ${labels[mode]} na chamada de ${agent.name}? A ação será registrada para auditoria.`)) return;
         try {
@@ -1591,11 +1607,107 @@ if (supervisionConfig) {
         } catch (error) { await finishAudit(); notify(error.message); }
     };
 
+    const modeLabel = (mode) => ({ listen: 'Só ouvir', whisper: 'Sussurrar para o agente', barge: 'Entrar na ligação' }[mode] || 'Acompanhamento');
+    const setSpyModeButtons = () => document.querySelectorAll('[data-spy-mode]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.spyMode === activeSpy?.mode);
+        button.disabled = !activeSpy || startingSpy;
+    });
+    const renderSpyConsole = () => {
+        if (!spyConsole) return;
+        spyConsole.hidden = !activeSpy;
+        if (!activeSpy) return;
+        spyAgentName.textContent = `${activeSpy.agent.number} · ${activeSpy.agent.name}`;
+        spyConsoleKicker.textContent = activeSpy.mode === 'listen' ? 'MODO SPY — ESCUTA SILENCIOSA' : activeSpy.mode === 'whisper' ? 'MODO SPY — SUSSURRO PRIVADO' : 'MODO SPY — ENTRADA NA LIGAÇÃO';
+        spyConsole.dataset.state = activeSession ? 'live' : activeSpy.state || 'waiting';
+        spyConsoleStatus.textContent = activeSession
+            ? `${modeLabel(activeSpy.mode)} em andamento. O operador não recebe aviso na escuta silenciosa.`
+            : activeSpy.state === 'error'
+                ? 'Não foi possível entrar nesta chamada. O painel continua aberto para uma nova tentativa.'
+                : 'Aguardando uma nova chamada deste agente. O acompanhamento permanece ativo até você sair.';
+        setSpyModeButtons();
+    };
+    const detachSpyMedia = () => { audio.pause(); audio.srcObject = null; };
+    const endSpyCall = () => {
+        if (activeSession && !activeSession.isEnded?.()) activeSession.terminate();
+        activeSession = null;
+        detachSpyMedia();
+    };
+    const closeSpy = async () => {
+        endSpyCall();
+        await finishAudit();
+        activeSpy = null;
+        renderSpyConsole(); render();
+    };
+    const attachSpyAudio = (session, peerconnection) => {
+        const peer = peerconnection || session.connection;
+        peer?.addEventListener('track', (event) => {
+            if (event.streams[0]) {
+                audio.srcObject = event.streams[0];
+                audio.play().catch(() => {});
+            }
+        });
+        if (activeSpy?.mode === 'listen') peer?.getSenders?.().forEach((sender) => { if (sender.track?.kind === 'audio') sender.track.enabled = false; });
+    };
+    const placeSpyCall = (payload) => {
+        if (!activeSpy || !ua.isRegistered() || activeSession) return;
+        const session = ua.call(`sip:${payload.dial_number}@${supervisionConfig.domain}`, { mediaConstraints: { audio: true, video: false } });
+        activeSession = session;
+        activeSpy.state = 'connecting';
+        renderSpyConsole(); render();
+        session.on('peerconnection', (event) => attachSpyAudio(session, event.peerconnection));
+        session.on('confirmed', () => { if (activeSession === session) { activeSpy.state = 'live'; renderSpyConsole(); render(); } });
+        const stopped = (state = 'waiting') => {
+            if (activeSession !== session) return;
+            activeSession = null;
+            detachSpyMedia();
+            if (activeSpy) activeSpy.state = state;
+            renderSpyConsole(); render();
+        };
+        session.on('ended', stopped);
+        session.on('failed', (event) => {
+            stopped('error');
+            if (event?.cause) notify(`Supervisão: ${event.cause}. O painel continua aberto.`);
+        });
+    };
+    const startSupervision = async (agent, mode, { reconnect = false } = {}) => {
+        if (!ua.isRegistered() || startingSpy) return;
+        startingSpy = true;
+        try {
+            if (activeSpy && activeSpy.agent.id !== agent.id) {
+                endSpyCall();
+                await finishAudit();
+                activeSpy = null;
+            }
+            if (activeSpy && activeSpy.agent.id === agent.id && activeSession && activeSpy.mode !== mode) endSpyCall();
+            const payload = await request(`${supervisionConfig.startUrl}/${agent.id}`, {
+                method: 'POST',
+                body: JSON.stringify({ mode, supervision_session_id: activeAuditId || undefined }),
+            });
+            activeAuditId = payload.session_id;
+            activeSpy = { agent, mode, callId: payload.call_id, state: 'connecting' };
+            renderSpyConsole(); render();
+            placeSpyCall(payload);
+            if (!reconnect) notify(payload.message);
+        } catch (error) {
+            if (activeSpy) activeSpy.state = 'error';
+            renderSpyConsole(); render();
+            notify(error.message);
+        } finally {
+            startingSpy = false;
+            renderSpyConsole(); render();
+        }
+    };
+
     ua.on('registered', () => { connection.className = 'supervision-connection registered'; connection.querySelector('span').textContent = 'Ramal supervisor conectado'; render(); });
     ua.on('registrationFailed', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Falha no ramal supervisor'; render(); });
     ua.on('disconnected', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Reconectando supervisão'; render(); });
     tenantSelect.addEventListener('change', loadAgents); search.addEventListener('input', render); document.querySelector('#refreshSupervision').addEventListener('click', loadAgents);
     document.querySelector('#operatorDayClose')?.addEventListener('click', closeOperatorDay); dayBackdrop?.addEventListener('click', closeOperatorDay); dayDate?.addEventListener('change', loadOperatorDay);
+    document.querySelectorAll('[data-spy-mode]').forEach((button) => button.addEventListener('click', () => {
+        if (activeSpy) startSupervision(activeSpy.agent, button.dataset.spyMode);
+    }));
+    spyOpenDetails?.addEventListener('click', () => { if (activeSpy) openOperatorDay(activeSpy.agent); });
+    spyExit?.addEventListener('click', closeSpy);
     const poll = setInterval(loadAgents, 5000); const timer = setInterval(render, 1000);
     window.addEventListener('beforeunload', () => { clearInterval(poll); clearInterval(timer); activeSession?.terminate(); ua.stop(); });
     ua.start(); loadAgents();

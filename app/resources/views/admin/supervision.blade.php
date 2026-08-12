@@ -37,6 +37,12 @@
     <section><h3>Linha do tempo</h3><div class="operator-timeline" id="operatorTimeline"></div></section>
 </aside>
 <div class="operator-day-backdrop" id="operatorDayBackdrop" hidden></div>
+<section class="spy-console" id="spyConsole" hidden aria-live="polite" aria-label="Mesa de escuta ativa">
+    <div class="spy-console-title"><span class="spy-eye" aria-hidden="true">◉</span><div><p id="spyConsoleKicker">MODO SPY</p><strong id="spyAgentName">Acompanhamento</strong></div></div>
+    <div class="spy-console-signal"><div class="spy-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><p id="spyConsoleStatus">Aguardando uma chamada do agente.</p></div>
+    <div class="spy-console-controls"><span>Falar com:</span><div class="spy-mode-switch" role="group" aria-label="Modo de supervisão"><button type="button" data-spy-mode="listen">Só ouvir</button><button type="button" data-spy-mode="whisper">Agente</button><button type="button" data-spy-mode="barge">Todos</button></div></div>
+    <div class="spy-console-actions"><button type="button" class="spy-info-button" id="spyOpenDetails">Ver info</button><button type="button" class="spy-exit-button" id="spyExit">Sair</button></div>
+</section>
 <audio id="supervisionAudio" autoplay></audio><div class="supervision-toast" id="supervisionToast" hidden></div>
 <script>window.__SUPERVISION_CONFIG__ = {{ Illuminate\Support\Js::from(['uri' => 'sip:'.$credentials['sip_user'].'@'.$credentials['sip_host'], 'password' => $credentials['sip_pass'], 'domain' => $credentials['sip_host'], 'websocketUrl' => $credentials['sip_ws_uri'], 'agentsUrl' => route('admin.supervision.agents'), 'dailyUrl' => url('/administracao/acompanhamento/ramais'), 'startUrl' => url('/administracao/acompanhamento/ramais'), 'finishUrl' => url('/administracao/acompanhamento/sessoes')]) }};</script>
 @endsection
