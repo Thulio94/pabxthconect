@@ -67,6 +67,9 @@ services:
       context: ..
       dockerfile: production/Dockerfile.nginx
     restart: unless-stopped
+    networks:
+      - default
+      - easypanel
     depends_on:
       app:
         condition: service_healthy
@@ -165,6 +168,9 @@ services:
       dockerfile: production/Dockerfile.asterisk
     restart: unless-stopped
     hostname: thconect-pbx
+    networks:
+      - default
+      - easypanel
     environment:
       PBX_AMI_USERNAME: ${PBX_AMI_USERNAME:?Defina PBX_AMI_USERNAME no Easypanel}
       PBX_AMI_SECRET: ${PBX_AMI_SECRET:?Defina PBX_AMI_SECRET no Easypanel}
@@ -492,3 +498,7 @@ volumes:
   app_storage:
   pbx_runtime:
   pbx_recordings:
+
+networks:
+  easypanel:
+    external: true

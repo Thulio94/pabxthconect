@@ -55,6 +55,8 @@ Adicione dois domínios no Easypanel:
 
 Ative HTTPS/Let's Encrypt nos dois. O segundo domínio transforma a conexão externa em WSS e encaminha o upgrade WebSocket para o Asterisk.
 
+Os serviços públicos `nginx` e `asterisk` também participam da rede externa `easypanel`, permitindo que o Traefik alcance as portas internas. PostgreSQL, Redis, filas e AMI permanecem restritos à rede privada do Compose.
+
 As variáveis precisam corresponder exatamente:
 
 ```env
