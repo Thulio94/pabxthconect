@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\PhoneCall;
+use App\Models\Extension;
+use App\Services\OperatorActivityRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -12,7 +14,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PhoneCallController extends Controller
 {
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, OperatorActivityRecorder $activity): JsonResponse
     {
         $agent = $request->session()->get('sip_agent');
         $data = $request->validate([
@@ -28,11 +30,14 @@ class PhoneCallController extends Controller
             'status' => $data['direction'] === 'incoming' ? 'ringing' : 'dialing',
             'started_at' => now(),
         ]);
+        if ($extension = Extension::find($agent['extension_id'] ?? null)) {
+            $activity->log($extension, $request->user(), 'call_started', 'Iniciou uma chamada.', ['direction' => $data['direction'], 'number' => $data['remote_number'] ?? null, 'phone_call_id' => $call->id]);
+        }
 
         return response()->json($this->payload($call), 201);
     }
 
-    public function update(Request $request, PhoneCall $phoneCall): JsonResponse
+    public function update(Request $request, PhoneCall $phoneCall, OperatorActivityRecorder $activity): JsonResponse
     {
         $this->authorizeSession($request, $phoneCall);
         $data = $request->validate([
@@ -51,6 +56,12 @@ class PhoneCallController extends Controller
 
         $phoneCall->status = $data['status'];
         $phoneCall->save();
+
+        $agent = $request->session()->get('sip_agent');
+        if ($extension = Extension::find($agent['extension_id'] ?? null)) {
+            $labels = ['answered' => 'Atendeu a chamada.', 'completed' => 'Finalizou a chamada.', 'failed' => 'Chamada não completada.', 'rejected' => 'Recusou a chamada.', 'cancelled' => 'Cancelou a chamada.'];
+            $activity->log($extension, $request->user(), 'call_'.$data['status'], $labels[$data['status']], ['number' => $phoneCall->remote_number, 'phone_call_id' => $phoneCall->id]);
+        }
 
         return response()->json($this->payload($phoneCall));
     }

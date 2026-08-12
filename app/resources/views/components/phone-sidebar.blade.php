@@ -6,8 +6,8 @@
         <a href="{{ route('phone.dashboard') }}" class="side-link active" title="Telefone"><span aria-hidden="true">☎</span></a>
         <a href="#history" class="side-link" title="Histórico"><span aria-hidden="true">◷</span></a>
         <a href="#appointments" class="side-link" title="Agenda"><span aria-hidden="true">◴</span></a>
-        @if(auth()->user()?->isSuperAdmin())
-            <a href="{{ route('admin.index') }}" class="side-link" title="Administração"><span aria-hidden="true">⚙</span></a>
+        @if(auth()->user()?->canManageOperation())
+            <a href="{{ auth()->user()->isSuperAdmin() ? route('admin.index') : route('admin.supervision.index') }}" class="side-link" title="Administração"><span aria-hidden="true">⚙</span></a>
         @endif
     </nav>
     <div class="side-bottom">

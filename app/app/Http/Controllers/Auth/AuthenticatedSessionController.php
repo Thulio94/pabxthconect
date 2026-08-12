@@ -41,7 +41,7 @@ class AuthenticatedSessionController extends Controller
 
         return $request->user()->must_change_password
             ? redirect()->route('password.change.edit')
-            : redirect()->intended(route('admin.index'));
+            : redirect()->intended($request->user()->isSuperAdmin() ? route('admin.index') : route('admin.supervision.index'));
     }
 
     public function destroy(Request $request): RedirectResponse

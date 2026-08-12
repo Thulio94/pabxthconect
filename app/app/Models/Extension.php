@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Extension extends Model
 {
@@ -22,4 +23,8 @@ class Extension extends Model
     public function pbxNode(): BelongsTo { return $this->belongsTo(PbxNode::class); }
     public function calls(): HasMany { return $this->hasMany(CallRecord::class); }
     public function appointments(): HasMany { return $this->hasMany(Appointment::class); }
+    public function presence(): HasOne { return $this->hasOne(ExtensionPresence::class); }
+    public function operatorSessions(): HasMany { return $this->hasMany(OperatorSession::class); }
+    public function pauseSessions(): HasMany { return $this->hasMany(OperatorPauseSession::class); }
+    public function activityLogs(): HasMany { return $this->hasMany(OperatorActivityLog::class); }
 }

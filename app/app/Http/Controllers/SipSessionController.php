@@ -3,6 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\Extension;
+use App\Models\ExtensionPresence;
+use App\Services\OperatorActivityRecorder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -15,10 +18,12 @@ class SipSessionController extends Controller
 {
     public function create(Request $request): View|RedirectResponse
     {
+        if ($request->user()?->isTenantAdmin()) return redirect()->route('admin.supervision.index');
+
         return $request->session()->has('sip_agent') ? redirect()->route('phone.dashboard') : view('auth.login');
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(Request $request, OperatorActivityRecorder $activity): RedirectResponse
     {
         $data = $request->validate([
             'email' => ['required', 'email', 'max:255'],
@@ -48,6 +53,12 @@ class SipSessionController extends Controller
         RateLimiter::clear($key);
         Auth::login($user);
         $request->session()->regenerate();
+
+        if ($user->isTenantAdmin()) {
+            $request->session()->forget('sip_agent');
+            return redirect()->route('admin.supervision.index');
+        }
+
         $request->session()->put('sip_agent', [
             'user_id' => $user->id,
             'tenant_id' => $extension->tenant_id,
@@ -56,12 +67,19 @@ class SipSessionController extends Controller
             'email' => $user->email,
             'role' => $user->role,
         ]);
+        $operatorSession = $activity->login($request, $user, $extension);
+        $request->session()->put('sip_agent.operator_session_id', $operatorSession->id);
 
         return redirect()->route('phone.dashboard');
     }
 
-    public function destroy(Request $request): RedirectResponse
+    public function destroy(Request $request, OperatorActivityRecorder $activity): RedirectResponse
     {
+        $agent = $request->session()->get('sip_agent');
+        if ($request->user() && $agent && ($extension = Extension::find($agent['extension_id'] ?? null))) {
+            $activity->logout($extension, $request->user(), $agent['operator_session_id'] ?? null);
+            ExtensionPresence::updateOrCreate(['extension_id' => $extension->id], ['pause_reason_id' => null, 'state' => 'offline', 'state_since' => now(), 'heartbeat_at' => now()]);
+        }
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

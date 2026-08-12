@@ -36,4 +36,9 @@ class Tenant extends Model
     {
         return $this->hasMany(Extension::class);
     }
+
+    public function pauseReasons(): HasMany
+    {
+        return $this->hasMany(PauseReason::class);
+    }
 }

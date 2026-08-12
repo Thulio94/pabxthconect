@@ -16,6 +16,10 @@ class AdminRecordingController extends Controller
             'phone' => ['nullable', 'string', 'max:30'], 'tenant_id' => ['nullable', 'integer', 'exists:tenants,id'],
             'status' => ['nullable', 'in:answered,failed,cancelled,busy,no_answer'],
         ]);
+        if ($request->user()->isTenantAdmin()) {
+            if (isset($filters['tenant_id']) && (int) $filters['tenant_id'] !== (int) $request->user()->tenant_id) abort(403);
+            $filters['tenant_id'] = $request->user()->tenant_id;
+        }
 
         $recordings = Recording::query()->with(['call.extension.user', 'call.tenant'])
             ->whereNotNull('available_at')->whereNull('deleted_at')
@@ -30,11 +34,13 @@ class AdminRecordingController extends Controller
                     });
             })->latest('created_at')->paginate(25)->withQueryString();
 
-        return view('admin.recordings', ['recordings' => $recordings, 'tenants' => Tenant::query()->orderBy('name')->get(['id', 'name']), 'filters' => $filters]);
+        $tenants = Tenant::query()->when($request->user()->isTenantAdmin(), fn ($query) => $query->whereKey($request->user()->tenant_id))->orderBy('name')->get(['id', 'name']);
+        return view('admin.recordings', ['recordings' => $recordings, 'tenants' => $tenants, 'filters' => $filters]);
     }
 
-    public function play(Recording $recording)
+    public function play(Request $request, Recording $recording)
     {
+        if ($request->user()->isTenantAdmin()) abort_unless((int) $recording->call?->tenant_id === (int) $request->user()->tenant_id, 403);
         abort_unless($recording->available_at && ! $recording->deleted_at, 404);
         abort_unless(Storage::disk($recording->storage_disk)->exists($recording->path), 404);
         return Storage::disk($recording->storage_disk)->response($recording->path, basename($recording->path), ['Content-Type' => $recording->mime_type ?: 'audio/wav']);

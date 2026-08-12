@@ -87,6 +87,22 @@ class AuthenticationFlowTest extends TestCase
         $this->get('/administracao')->assertOk();
     }
 
+    public function test_company_administrator_is_redirected_to_reports_and_cannot_open_phone_apis(): void
+    {
+        $this->withoutMiddleware(PreventRequestForgery::class);
+        $tenant = Tenant::create(['name' => 'Empresa Restrita', 'slug' => 'empresa-restrita', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'email' => 'gestor@empresa.local', 'password' => Hash::make('Gestor123'), 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $admin->id, 'number' => 999, 'sip_username' => "t{$tenant->id}-e999", 'sip_secret' => 'SipAdm12', 'status' => 'active']);
+
+        $this->post('/entrar', ['email' => $admin->email, 'password' => 'Gestor123'])->assertRedirect('/administracao/acompanhamento');
+        $this->assertAuthenticatedAs($admin);
+        $this->assertFalse(session()->has('sip_agent'));
+        $this->get('/telefone')->assertRedirect('/administracao/acompanhamento');
+
+        $this->withSession(['sip_agent' => ['user_id' => $admin->id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => '999']])
+            ->postJson('/telefone/chamadas', ['direction' => 'outgoing', 'remote_number' => '81999999999'])->assertForbidden();
+    }
+
     private function extension(): Extension
     {
         $tenant = Tenant::create(['name' => 'Empresa Teste', 'slug' => 'empresa-teste', 'status' => 'active', 'record_calls' => true]);

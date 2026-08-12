@@ -22,7 +22,7 @@ class SuperAdminController extends Controller
     public function index(): View
     {
         return view('admin.index', [
-            'tenants' => Tenant::query()->with(['trunks', 'extensions.user'])->orderBy('name')->get(),
+            'tenants' => Tenant::query()->with(['trunks', 'extensions.user', 'pauseReasons' => fn ($query) => $query->orderBy('name')])->orderBy('name')->get(),
             'trunks' => SipTrunk::query()->withCount('tenants')->orderBy('name')->get(),
         ]);
     }

@@ -29,7 +29,7 @@ class PbxProvisioningTest extends TestCase
         $tenant->trunks()->attach($trunk, ['priority' => 1, 'is_active' => true]);
 
         $first = User::factory()->create(['tenant_id' => $tenant->id]);
-        $second = User::factory()->create(['tenant_id' => $tenant->id]);
+        $second = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin']);
         $allocator = app(ExtensionAllocator::class);
 
         $firstExtension = $allocator->allocate($first);
@@ -51,6 +51,8 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString("[{$firstExtension->sip_username}]", $endpoints);
         $this->assertStringContainsString('identify_by=username,auth_username', $endpoints);
         $this->assertStringContainsString('Dial(PJSIP/8033${EXTEN}@trunk-'.$trunk->id.',60,g)', $dialplan);
+        $this->assertStringContainsString("Outbound blocked for tenant administrator {$secondExtension->id}", $dialplan);
+        $this->assertStringContainsString("exten => *81{$firstExtension->id},1,NoOp(Listen {$firstExtension->id} by {$secondExtension->id})", $dialplan);
         $this->assertStringNotContainsString($firstExtension->sip_secret, $dialplan);
     }
 }

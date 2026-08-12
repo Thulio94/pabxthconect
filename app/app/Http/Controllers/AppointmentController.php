@@ -23,7 +23,10 @@ class AppointmentController extends Controller
             ->whereIn('id', $appointments->where('scheduled_for', '<=', now())->pluck('id'))
             ->whereNull('notified_at')->update(['notified_at' => now()]);
 
-        return response()->json(['appointments' => $appointments->map(fn (Appointment $appointment) => $this->payload($appointment))]);
+        return response()->json([
+            'appointments' => $appointments->map(fn (Appointment $appointment) => $this->payload($appointment)),
+            'server_now' => now()->toIso8601String(),
+        ]);
     }
 
     public function store(Request $request): JsonResponse

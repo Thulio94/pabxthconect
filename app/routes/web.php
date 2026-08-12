@@ -3,6 +3,8 @@
 use App\Http\Controllers\AgentDashboardController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\AdminRecordingController;
+use App\Http\Controllers\AdminSupervisionController;
+use App\Http\Controllers\AgentPresenceController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\PasswordChangeController;
 use App\Http\Controllers\PhoneCallController;
@@ -28,6 +30,9 @@ Route::middleware('sip.session')->group(function () {
     Route::post('/telefone/chamadas/{phoneCall}/gravacao', [PhoneCallController::class, 'uploadRecording'])->name('phone.calls.recording.store');
     Route::get('/telefone/chamadas/{phoneCall}/gravacao', [PhoneCallController::class, 'recording'])->name('phone.calls.recording');
     Route::get('/telefone/historico/{callRecord}/gravacao', PbxRecordingController::class)->name('phone.call-records.recording');
+    Route::post('/telefone/presenca', [AgentPresenceController::class, 'heartbeat'])->name('phone.presence.heartbeat');
+    Route::post('/telefone/pausa', [AgentPresenceController::class, 'pause'])->name('phone.presence.pause');
+    Route::delete('/telefone/pausa', [AgentPresenceController::class, 'resume'])->name('phone.presence.resume');
 });
 
 Route::prefix('administracao')->group(function () {
@@ -42,10 +47,21 @@ Route::prefix('administracao')->group(function () {
         Route::post('/sair', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
     });
 
-    Route::middleware(['auth', 'password.changed', 'superadmin'])->group(function () {
-        Route::get('/', [SuperAdminController::class, 'index'])->name('admin.index');
+    Route::middleware(['auth', 'password.changed', 'operation.admin'])->group(function () {
         Route::get('/gravacoes', [AdminRecordingController::class, 'index'])->name('admin.recordings.index');
         Route::get('/gravacoes/{recording}/ouvir', [AdminRecordingController::class, 'play'])->name('admin.recordings.play');
+        Route::get('/acompanhamento', [AdminSupervisionController::class, 'index'])->name('admin.supervision.index');
+        Route::get('/acompanhamento/agentes', [AdminSupervisionController::class, 'agents'])->name('admin.supervision.agents');
+        Route::get('/acompanhamento/ramais/{extension}/dia', [AdminSupervisionController::class, 'daily'])->name('admin.supervision.daily');
+        Route::post('/acompanhamento/ramais/{extension}', [AdminSupervisionController::class, 'supervise'])->name('admin.supervision.start');
+        Route::patch('/acompanhamento/sessoes/{supervisionSession}', [AdminSupervisionController::class, 'finish'])->name('admin.supervision.finish');
+    });
+
+    Route::middleware(['auth', 'password.changed', 'superadmin'])->group(function () {
+        Route::get('/', [SuperAdminController::class, 'index'])->name('admin.index');
+        Route::post('/pausas', [AdminSupervisionController::class, 'storePause'])->name('admin.pauses.store');
+        Route::put('/pausas/{pauseReason}', [AdminSupervisionController::class, 'updatePause'])->name('admin.pauses.update');
+        Route::delete('/pausas/{pauseReason}', [AdminSupervisionController::class, 'destroyPause'])->name('admin.pauses.destroy');
         Route::post('/empresas', [SuperAdminController::class, 'storeTenant'])->name('admin.tenants.store');
         Route::put('/empresas/{tenant}', [SuperAdminController::class, 'updateTenant'])->name('admin.tenants.update');
         Route::delete('/empresas/{tenant}', [SuperAdminController::class, 'destroyTenant'])->name('admin.tenants.destroy');

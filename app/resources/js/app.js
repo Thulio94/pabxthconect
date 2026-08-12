@@ -107,6 +107,8 @@ if (config) {
     let currentCallPromise = null;
     let callStartedAt = null;
     let callTimer = null;
+    let lineStateStartedAt = new Date();
+    let lineStateTimer = null;
     let callFinished = false;
     let mediaRecorder = null;
     let recordingContext = null;
@@ -146,7 +148,11 @@ if (config) {
     let appointments = [];
     let currentDueAppointment = null;
     let appointmentPollTimer = null;
+    let appointmentDueTimer = null;
+    let appointmentServerOffset = 0;
+    let renderedDueKey = '';
     let lastAppointmentSignalId = null;
+    const defaultDocumentTitle = document.title;
 
     const stopCallSignal = () => {
         callSignalGeneration += 1;
@@ -256,10 +262,17 @@ if (config) {
         return response.status === 204 ? {} : response.json();
     };
 
-    const setLineState = (state, message, tone = '') => {
+    const setLineState = (state, message, tone = '', since = null) => {
+        const changed = elements.statusName.textContent !== state || elements.statusOrb.dataset.tone !== tone;
         elements.statusName.textContent = state;
         elements.lineMessage.textContent = message;
         elements.statusOrb.className = `status-orb ${tone}`.trim();
+        elements.statusOrb.dataset.tone = tone;
+        const suppliedSince = since ? new Date(since) : null;
+        if (changed || (suppliedSince && suppliedSince.getTime() !== lineStateStartedAt.getTime())) {
+            lineStateStartedAt = suppliedSince || new Date();
+            elements.statusTimer.textContent = '00:00';
+        }
     };
 
     const setAudioPermission = (state) => {
@@ -617,16 +630,11 @@ if (config) {
 
     const startTimer = () => {
         callStartedAt = new Date();
-        clearInterval(callTimer);
-        callTimer = setInterval(() => {
-            elements.statusTimer.textContent = formatDuration(Math.floor((Date.now() - callStartedAt.getTime()) / 1000));
-        }, 1000);
     };
 
     const stopTimer = () => {
         clearInterval(callTimer);
         callTimer = null;
-        elements.statusTimer.textContent = '00:00';
     };
 
     const statusLabel = (status) => ({
@@ -1040,6 +1048,7 @@ if (config) {
         phoneInput.disabled = false;
         elements.callButton.disabled = false;
         updateAppointmentAlert();
+        heartbeat();
         phoneInput.focus();
     });
     ua.on('unregistered', () => {
@@ -1239,11 +1248,14 @@ if (config) {
     const appointmentDateLabel = (value) => new Date(value).toLocaleString('pt-BR', {
         day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
     });
+    const appointmentIsDue = (appointment) => appointment.status === 'pending'
+        && (appointment.is_due || new Date(appointment.scheduled_for).getTime() <= Date.now() + appointmentServerOffset);
 
     const updateAppointmentAlert = () => {
-        const due = appointments.find((appointment) => appointment.is_due);
+        const due = appointments.find(appointmentIsDue);
         currentDueAppointment = due || null;
         elements.appointmentAlert.hidden = !due;
+        document.title = due ? `🔔 Retorno: ${due.name} | Thconect` : defaultDocumentTitle;
         if (!due) return;
 
         elements.appointmentAlertTitle.textContent = due.name;
@@ -1263,6 +1275,7 @@ if (config) {
         elements.appointmentCount.textContent = `${appointments.length} ${appointments.length === 1 ? 'agendamento' : 'agendamentos'}`;
         elements.appointmentList.replaceChildren();
         if (!appointments.length) {
+            renderedDueKey = '';
             const empty = document.createElement('div');
             empty.className = 'appointment-empty';
             empty.textContent = 'Nenhum retorno agendado. Use o formulário para criar o primeiro.';
@@ -1272,8 +1285,9 @@ if (config) {
         }
 
         appointments.forEach((appointment) => {
+            const isDue = appointmentIsDue(appointment);
             const item = document.createElement('article');
-            item.className = `appointment-item${appointment.is_due ? ' due' : ''}`;
+            item.className = `appointment-item${isDue ? ' due' : ''}`;
             item.dataset.appointmentId = appointment.id;
             const marker = document.createElement('i');
             marker.setAttribute('aria-hidden', 'true');
@@ -1285,7 +1299,7 @@ if (config) {
             copy.append(name, phone);
             const time = document.createElement('time');
             time.dateTime = appointment.scheduled_for;
-            time.textContent = appointment.is_due ? `Agora · ${appointmentDateLabel(appointment.scheduled_for)}` : appointmentDateLabel(appointment.scheduled_for);
+            time.textContent = isDue ? `Agora · ${appointmentDateLabel(appointment.scheduled_for)}` : appointmentDateLabel(appointment.scheduled_for);
             const cancel = document.createElement('button');
             cancel.type = 'button';
             cancel.className = 'appointment-cancel';
@@ -1295,6 +1309,7 @@ if (config) {
             item.append(marker, copy, time, cancel);
             elements.appointmentList.append(item);
         });
+        renderedDueKey = appointments.filter(appointmentIsDue).map((appointment) => appointment.id).join(',');
         updateAppointmentAlert();
     };
 
@@ -1302,6 +1317,7 @@ if (config) {
         try {
             const payload = await api(config.appointmentsUrl);
             appointments = payload.appointments || [];
+            if (payload.server_now) appointmentServerOffset = new Date(payload.server_now).getTime() - Date.now();
             renderAppointments();
         } catch (error) {
             console.warn('Não foi possível atualizar a agenda.', error);
@@ -1410,8 +1426,45 @@ if (config) {
     }
 
     document.querySelector('#phoneLogout')?.addEventListener('submit', () => ua.stop());
+    const pauseSelect = document.querySelector('#agentPauseSelect');
+    const pauseButton = document.querySelector('#agentPauseButton');
+    const heartbeat = () => api(config.presenceUrl, { method: 'POST', body: JSON.stringify({ state: ua.isRegistered() ? 'available' : 'offline' }) }).then((presence) => {
+        if (pauseSelect && presence.pause_reason_id) {
+            pauseSelect.value = String(presence.pause_reason_id);
+            if (!currentSession) setLineState('Em pausa', `Pausa: ${pauseSelect.selectedOptions[0]?.textContent || 'em andamento'}.`, 'calling', presence.state_since);
+        } else if (presence.state === 'available' && ua.isRegistered() && !currentSession) {
+            setLineState('Registrado', 'Ramal pronto para fazer e receber chamadas.', 'available', presence.state_since);
+        }
+    }).catch(() => {});
+    pauseButton?.addEventListener('click', async () => {
+        pauseButton.disabled = true;
+        try {
+            if (pauseSelect.value) {
+                await api(config.pauseUrl, { method: 'POST', body: JSON.stringify({ pause_reason_id: Number(pauseSelect.value) }) });
+                setLineState('Em pausa', `Pausa: ${pauseSelect.selectedOptions[0].textContent}.`, 'calling');
+            } else {
+                await api(config.pauseUrl, { method: 'DELETE' });
+                if (ua.isRegistered() && !currentSession) setLineState('Registrado', 'Ramal pronto para fazer e receber chamadas.', 'available');
+            }
+        } catch (error) {
+            setLineState('Pausa não alterada', error.message, 'error');
+        } finally {
+            pauseButton.disabled = false;
+        }
+    });
+    const presenceTimer = window.setInterval(heartbeat, 20000);
+    lineStateTimer = window.setInterval(() => {
+        elements.statusTimer.textContent = formatDuration(Math.floor((Date.now() - lineStateStartedAt.getTime()) / 1000));
+    }, 1000);
+    appointmentDueTimer = window.setInterval(() => {
+        const dueKey = appointments.filter(appointmentIsDue).map((appointment) => appointment.id).join(',');
+        if (dueKey !== renderedDueKey) renderAppointments();
+    }, 1000);
     window.addEventListener('beforeunload', () => {
         clearInterval(appointmentPollTimer);
+        clearInterval(appointmentDueTimer);
+        clearInterval(presenceTimer);
+        clearInterval(lineStateTimer);
         microphonePreviewAudio?.pause();
         microphoneTestStream?.getTracks().forEach((track) => track.stop());
         releaseCallMicrophone();
@@ -1427,4 +1480,123 @@ if (config) {
     } catch (error) {
         setLineState('Configuração inválida', error.message, 'error');
     }
+}
+
+const supervisionConfig = window.__SUPERVISION_CONFIG__;
+if (supervisionConfig) {
+    delete window.__SUPERVISION_CONFIG__;
+    JsSIP.debug.disable('JsSIP:*');
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+    const tenantSelect = document.querySelector('#supervisionTenant');
+    const tableBody = document.querySelector('#supervisionAgents');
+    const search = document.querySelector('#agentSearch');
+    const connection = document.querySelector('#supervisionConnection');
+    const audio = document.querySelector('#supervisionAudio');
+    const toast = document.querySelector('#supervisionToast');
+    const dayDrawer = document.querySelector('#operatorDayDrawer');
+    const dayBackdrop = document.querySelector('#operatorDayBackdrop');
+    const dayDate = document.querySelector('#operatorDayDate');
+    const dayCards = document.querySelector('#operatorDayCards');
+    const pauseBreakdown = document.querySelector('#operatorPauseBreakdown');
+    const operatorTimeline = document.querySelector('#operatorTimeline');
+    let agents = [];
+    let activeSession = null;
+    let activeAuditId = null;
+    let toastTimer = null;
+    let selectedOperator = null;
+
+    const socket = new JsSIP.WebSocketInterface(supervisionConfig.websocketUrl);
+    const ua = new JsSIP.UA({ uri: supervisionConfig.uri, password: supervisionConfig.password, sockets: [socket], register: true, session_timers: false });
+    supervisionConfig.password = null;
+    const request = async (url, options = {}) => {
+        const headers = { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, ...(options.headers || {}) };
+        if (options.body) headers['Content-Type'] = 'application/json';
+        const response = await fetch(url, { ...options, headers });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || `Falha HTTP ${response.status}`);
+        return payload;
+    };
+    const notify = (message) => {
+        clearTimeout(toastTimer); toast.textContent = message; toast.hidden = false;
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 5000);
+    };
+    const duration = (seconds) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    const elapsed = (date) => date ? Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 1000)) : 0;
+    const node = (tag, className, text) => { const element = document.createElement(tag); if (className) element.className = className; if (text !== undefined) element.textContent = text; return element; };
+
+    const render = () => {
+        const term = search.value.trim().toLowerCase();
+        const visible = agents.filter((agent) => `${agent.name} ${agent.email} ${agent.number}`.toLowerCase().includes(term));
+        tableBody.replaceChildren();
+        document.querySelector('#agentTotal').textContent = agents.length;
+        document.querySelectorAll('[data-state-counter]').forEach((counter) => { counter.querySelector('b').textContent = agents.filter((agent) => agent.state === counter.dataset.stateCounter).length; });
+        if (!visible.length) { const row = node('tr'); const cell = node('td', 'empty-cell', 'Nenhum agente encontrado.'); cell.colSpan = 7; row.append(cell); tableBody.append(row); return; }
+        visible.forEach((agent) => {
+            const row = node('tr');
+            const identityCell = node('td'); const identity = node('div', 'agent-identity'); identity.append(node('b', '', `${agent.number} · ${agent.name}`), node('small', '', agent.email || '')); identityCell.append(identity);
+            const statusCell = node('td'); const status = node('span', `agent-status ${agent.state}`); if (agent.status_color) status.style.background = agent.status_color; status.append(node('i'), node('span', '', agent.status_label), node('time', '', duration(elapsed(agent.since)))); statusCell.append(status);
+            const loggedCell = node('td', 'metric-cell', duration(agent.logged_seconds));
+            const callsCell = node('td', 'metric-cell', String(agent.calls_today)); callsCell.title = `${agent.answered_today} atendidas`;
+            const talkCell = node('td', 'metric-cell', duration(agent.talk_seconds));
+            const pauseCell = node('td', 'metric-cell', duration(agent.pause_seconds));
+            const actionCell = node('td'); const actions = node('div', 'supervision-actions');
+            const details = node('button', 'supervision-action details', 'Ver dia'); details.type = 'button'; details.addEventListener('click', () => openOperatorDay(agent)); actions.append(details);
+            [['listen','Ouvir'],['whisper','Sussurrar'],['barge','Entrar']].forEach(([mode,label]) => { const button = node('button', `supervision-action ${mode}`, label); button.type = 'button'; button.disabled = agent.state !== 'talking' || !ua.isRegistered() || Boolean(activeSession); button.addEventListener('click', () => startSupervision(agent, mode)); actions.append(button); });
+            actionCell.append(actions); row.append(identityCell, statusCell, loggedCell, callsCell, talkCell, pauseCell, actionCell); tableBody.append(row);
+        });
+    };
+
+    const closeOperatorDay = () => { dayDrawer.hidden = true; dayBackdrop.hidden = true; selectedOperator = null; };
+    const loadOperatorDay = async () => {
+        if (!selectedOperator) return;
+        dayCards.innerHTML = '<p class="muted">Carregando consolidado…</p>';
+        pauseBreakdown.replaceChildren(); operatorTimeline.replaceChildren();
+        try {
+            const data = await request(`${supervisionConfig.dailyUrl}/${selectedOperator.id}/dia?date=${encodeURIComponent(dayDate.value)}`);
+            document.querySelector('#operatorDayName').textContent = data.operator.name || `Ramal ${data.operator.number}`;
+            document.querySelector('#operatorDayIdentity').textContent = `Ramal ${data.operator.number} · ${data.operator.email || ''}`;
+            const cards = [
+                ['Tempo logado', duration(data.summary.logged_seconds)], ['Ligações', String(data.summary.calls)],
+                ['Atendidas', String(data.summary.answered)], ['Tempo em chamada', duration(data.summary.talk_seconds)],
+                ['Pausas', duration(data.summary.pause_seconds)], ['Acessos', String(data.summary.sessions)],
+            ];
+            dayCards.replaceChildren(...cards.map(([label, value]) => { const card = node('div'); card.append(node('span', '', label), node('b', '', value)); return card; }));
+            if (!data.pause_breakdown.length) pauseBreakdown.append(node('p', 'muted', 'Nenhuma pausa registrada nesta data.'));
+            data.pause_breakdown.forEach((pause) => { const row = node('div'); row.append(node('b', '', pause.name), node('span', '', `${pause.count} ocorrência(s)`), node('time', '', duration(pause.seconds))); pauseBreakdown.append(row); });
+            if (!data.timeline.length) operatorTimeline.append(node('p', 'muted', 'Nenhuma ação registrada nesta data.'));
+            data.timeline.forEach((event) => { const row = node('div', `timeline-event ${event.action}`); const when = new Date(event.occurred_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); row.append(node('time', '', when), node('span', '', event.description)); operatorTimeline.append(row); });
+        } catch (error) { dayCards.innerHTML = ''; dayCards.append(node('p', 'alert alert-error', error.message)); }
+    };
+    const openOperatorDay = (agent) => { selectedOperator = agent; dayDrawer.hidden = false; dayBackdrop.hidden = false; loadOperatorDay(); };
+    const loadAgents = async () => {
+        try { agents = (await request(`${supervisionConfig.agentsUrl}?tenant_id=${encodeURIComponent(tenantSelect.value)}`)).agents; render(); }
+        catch (error) { notify(`Não foi possível atualizar os agentes: ${error.message}`); }
+    };
+    const finishAudit = async () => {
+        if (!activeAuditId) return;
+        const id = activeAuditId; activeAuditId = null;
+        await request(`${supervisionConfig.finishUrl}/${id}`, { method: 'PATCH' }).catch(() => {});
+    };
+    const startSupervision = async (agent, mode) => {
+        const labels = { listen: 'ouvir silenciosamente', whisper: 'sussurrar para o agente', barge: 'entrar na ligação' };
+        if (!window.confirm(`Confirma ${labels[mode]} na chamada de ${agent.name}? A ação será registrada para auditoria.`)) return;
+        try {
+            const payload = await request(`${supervisionConfig.startUrl}/${agent.id}`, { method: 'POST', body: JSON.stringify({ mode }) });
+            activeAuditId = payload.session_id;
+            const session = ua.call(`sip:${payload.dial_number}@${supervisionConfig.domain}`, { mediaConstraints: { audio: true, video: false } });
+            activeSession = session; render(); notify(payload.message);
+            session.on('peerconnection', () => session.connection?.addEventListener('track', (event) => { if (event.streams[0]) audio.srcObject = event.streams[0]; }));
+            const ended = async () => { if (activeSession === session) activeSession = null; audio.srcObject = null; await finishAudit(); render(); };
+            session.on('ended', ended); session.on('failed', ended);
+        } catch (error) { await finishAudit(); notify(error.message); }
+    };
+
+    ua.on('registered', () => { connection.className = 'supervision-connection registered'; connection.querySelector('span').textContent = 'Ramal supervisor conectado'; render(); });
+    ua.on('registrationFailed', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Falha no ramal supervisor'; render(); });
+    ua.on('disconnected', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Reconectando supervisão'; render(); });
+    tenantSelect.addEventListener('change', loadAgents); search.addEventListener('input', render); document.querySelector('#refreshSupervision').addEventListener('click', loadAgents);
+    document.querySelector('#operatorDayClose')?.addEventListener('click', closeOperatorDay); dayBackdrop?.addEventListener('click', closeOperatorDay); dayDate?.addEventListener('change', loadOperatorDay);
+    const poll = setInterval(loadAgents, 5000); const timer = setInterval(render, 1000);
+    window.addEventListener('beforeunload', () => { clearInterval(poll); clearInterval(timer); activeSession?.terminate(); ua.stop(); });
+    ua.start(); loadAgents();
 }

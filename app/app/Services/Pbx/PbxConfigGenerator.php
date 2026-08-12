@@ -40,7 +40,7 @@ class PbxConfigGenerator
 
             return "[{$id}-auth]\ntype=auth\nauth_type=userpass\nusername={$username}\npassword={$secret}\n\n"
                 . "[{$id}]\ntype=aor\nmax_contacts=1\nremove_existing=yes\n\n"
-                . "[{$id}]\ntype=endpoint\ntransport=transport-ws\ncontext=extension-{$extension->id}\naors={$id}\nauth={$id}-auth\nidentify_by=username,auth_username\ndisallow=all\nallow=ulaw,alaw\nwebrtc=yes\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nice_support=yes\nmedia_encryption=dtls\ndtls_auto_generate_cert=yes\n\n";
+                . "[{$id}]\ntype=endpoint\ntransport=transport-ws\ncontext=extension-{$extension->id}\naors={$id}\nauth={$id}-auth\nidentify_by=username,auth_username\nset_var=SPYGROUP=extension-{$extension->id}\ndisallow=all\nallow=ulaw,alaw\nwebrtc=yes\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nice_support=yes\nmedia_encryption=dtls\ndtls_auto_generate_cert=yes\n\n";
 
         })->implode('');
     }
@@ -84,8 +84,20 @@ class PbxConfigGenerator
                 : '';
             return "[tenant-{$tenant->id}]\nexten => _X.,1,NoOp(Outbound tenant {$tenant->id})\n{$recording} same => n,Dial(PJSIP/{$tech}\${EXTEN}@{$trunkName},60,g)\n same => n,Return()\n\n";
         })->implode('');
-        $extensionContexts = $tenants->flatMap(fn (Tenant $tenant) => $tenant->extensions)->map(function (Extension $extension) {
-            return "[extension-{$extension->id}]\nexten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n\n";
+        $allExtensions = $tenants->flatMap(fn (Tenant $tenant) => $tenant->extensions);
+        $extensionContexts = $allExtensions->map(function (Extension $extension) use ($allExtensions) {
+            $targets = ! $extension->user?->canManageOperation() ? collect() : ($extension->user->isSuperAdmin()
+                ? $allExtensions
+                : $allExtensions->where('tenant_id', $extension->tenant_id));
+            $supervision = $targets->flatMap(fn (Extension $target) => [
+                "exten => *81{$target->id},1,NoOp(Listen {$target->id} by {$extension->id})\n same => n,ChanSpy(PJSIP,qEg(extension-{$target->id}))\n same => n,Hangup()\n",
+                "exten => *82{$target->id},1,NoOp(Whisper {$target->id} by {$extension->id})\n same => n,ChanSpy(PJSIP,qwEg(extension-{$target->id}))\n same => n,Hangup()\n",
+                "exten => *83{$target->id},1,NoOp(Barge {$target->id} by {$extension->id})\n same => n,ChanSpy(PJSIP,qBEg(extension-{$target->id}))\n same => n,Hangup()\n",
+            ])->implode('');
+            $outbound = $extension->user?->isTenantAdmin()
+                ? "exten => _X.,1,NoOp(Outbound blocked for tenant administrator {$extension->id})\n same => n,Hangup(21)\n"
+                : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
+            return "[extension-{$extension->id}]\n{$supervision}{$outbound}\n";
         })->implode('');
         return $tenantContexts.$extensionContexts;
     }

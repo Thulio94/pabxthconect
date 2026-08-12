@@ -30,7 +30,8 @@ class AgentDashboardController extends Controller
         $history = collect($historyPage->items());
         $nextHistoryCursor = $historyInfiniteEnabled ? $historyPage->nextCursor()?->encode() : null;
 
-        return view('agent.dashboard', compact('agent', 'tenant', 'credentials', 'history', 'filters', 'historyInfiniteEnabled', 'nextHistoryCursor'));
+        $pauseReasons = $tenant->pauseReasons()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'color', 'max_minutes']);
+        return view('agent.dashboard', compact('agent', 'tenant', 'credentials', 'history', 'filters', 'historyInfiniteEnabled', 'nextHistoryCursor', 'pauseReasons'));
     }
 
     public function history(Request $request): JsonResponse

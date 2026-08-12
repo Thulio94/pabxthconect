@@ -29,6 +29,7 @@ class AppointmentFlowTest extends TestCase
         $appointment->update(['scheduled_for' => now()->subMinute()]);
         $this->actingAs($user)->withSession(['sip_agent' => $session])
             ->getJson('/telefone/agenda')->assertOk()
+            ->assertJsonStructure(['server_now'])
             ->assertJsonPath('appointments.0.is_due', true)
             ->assertJsonPath('appointments.0.name', 'Maria Silva');
     }

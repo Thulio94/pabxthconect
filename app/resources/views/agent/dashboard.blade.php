@@ -6,7 +6,7 @@
     <main class="workspace phone-workspace">
         <header class="page-heading">
             <div><p class="eyebrow">THCONECT PHONE</p><h1>Meu ramal</h1></div>
-            <div class="connection-pill" id="secureConnection"><i></i> WebRTC com conexão segura</div>
+            <div class="agent-presence-control"><select id="agentPauseSelect" aria-label="Selecionar pausa"><option value="">Disponível</option>@foreach($pauseReasons as $pause)<option value="{{ $pause->id }}">{{ $pause->name }}{{ $pause->max_minutes ? ' · '.$pause->max_minutes.' min' : '' }}</option>@endforeach</select><button class="button button-soft" id="agentPauseButton" type="button">Aplicar</button><div class="connection-pill" id="secureConnection"><i></i> WebRTC com conexão segura</div></div>
         </header>
 
         <section class="line-status" aria-live="polite">
@@ -219,6 +219,8 @@ window.__SIP_CONFIG__ = {{ Illuminate\Support\Js::from([
     'historyInfiniteEnabled' => $historyInfiniteEnabled,
     'historyNextCursor' => $nextHistoryCursor,
     'appointmentsUrl' => route('phone.appointments.index'),
+    'presenceUrl' => route('phone.presence.heartbeat'),
+    'pauseUrl' => route('phone.presence.pause'),
 ]) }};
 </script>
 @endsection
