@@ -21,7 +21,6 @@
             <label>E-mail<input name="email" type="email" value="{{ old('email') }}" placeholder="nome@empresa.com.br" autocomplete="username" required autofocus></label>
             <label>Senha do ramal<input name="password" type="password" autocomplete="current-password" required></label>
             <button class="button button-primary button-full" type="submit">Entrar com segurança</button>
-            <p class="auth-footnote">Seu e-mail identifica automaticamente a empresa e o ramal. A empresa não é exibida nesta página.</p>
         </form>
     </section>
 </main>
