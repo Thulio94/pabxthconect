@@ -8,6 +8,7 @@ use App\Models\Recording;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -44,6 +45,30 @@ class PhoneCallFlowTest extends TestCase
         $other = $this->extension('outra');
         $this->actingAs($other[1]->user)->withSession(['sip_agent' => $this->agentSession($other[0], $other[1])])
             ->get("/telefone/historico/{$call->id}/gravacao")->assertNotFound();
+    }
+
+    public function test_webphone_persists_call_history_and_browser_recording_when_ami_is_unavailable(): void
+    {
+        Storage::fake('pbx_recordings');
+        [$tenant, $extension] = $this->extension();
+        $session = ['sip_agent' => $this->agentSession($tenant, $extension)];
+
+        $created = $this->actingAs($extension->user)->withSession($session)
+            ->postJson('/telefone/chamadas', ['direction' => 'outgoing', 'remote_number' => '(81) 99999-0000'])
+            ->assertCreated();
+        $callId = $created->json('id');
+
+        $this->actingAs($extension->user)->withSession($session)
+            ->patchJson("/telefone/chamadas/{$callId}", ['status' => 'answered'])->assertOk();
+        $this->actingAs($extension->user)->withSession($session)
+            ->post("/telefone/chamadas/{$callId}/gravacao", ['recording' => UploadedFile::fake()->createWithContent('chamada.webm', 'audio-do-navegador')])
+            ->assertOk()->assertJsonPath('has_recording', true);
+        $this->actingAs($extension->user)->withSession($session)
+            ->patchJson("/telefone/chamadas/{$callId}", ['status' => 'completed', 'duration_seconds' => 12])->assertOk();
+
+        $this->assertDatabaseHas('call_records', ['id' => $callId, 'extension_id' => $extension->id, 'status' => 'completed']);
+        $this->assertDatabaseHas('recordings', ['call_record_id' => $callId]);
+        $this->actingAs($extension->user)->withSession($session)->get('/telefone/historico/'.$callId.'/gravacao')->assertOk();
     }
 
     private function extension(string $suffix = ''): array

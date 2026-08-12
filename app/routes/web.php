@@ -26,9 +26,8 @@ Route::middleware('sip.session')->group(function () {
     Route::patch('/telefone/agenda/{appointment}', [AppointmentController::class, 'update'])->name('phone.appointments.update');
     Route::delete('/telefone/agenda/{appointment}', [AppointmentController::class, 'destroy'])->name('phone.appointments.destroy');
     Route::post('/telefone/chamadas', [PhoneCallController::class, 'store'])->name('phone.calls.store');
-    Route::patch('/telefone/chamadas/{phoneCall}', [PhoneCallController::class, 'update'])->name('phone.calls.update');
-    Route::post('/telefone/chamadas/{phoneCall}/gravacao', [PhoneCallController::class, 'uploadRecording'])->name('phone.calls.recording.store');
-    Route::get('/telefone/chamadas/{phoneCall}/gravacao', [PhoneCallController::class, 'recording'])->name('phone.calls.recording');
+    Route::patch('/telefone/chamadas/{callRecord}', [PhoneCallController::class, 'update'])->name('phone.calls.update');
+    Route::post('/telefone/chamadas/{callRecord}/gravacao', [PhoneCallController::class, 'uploadRecording'])->name('phone.calls.recording.store');
     Route::get('/telefone/historico/{callRecord}/gravacao', PbxRecordingController::class)->name('phone.call-records.recording');
     Route::post('/telefone/presenca', [AgentPresenceController::class, 'heartbeat'])->name('phone.presence.heartbeat');
     Route::post('/telefone/pausa', [AgentPresenceController::class, 'pause'])->name('phone.presence.pause');

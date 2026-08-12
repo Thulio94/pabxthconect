@@ -29,16 +29,30 @@ class AmiEventProcessor
 
         $number = preg_replace('/\D+/', '', (string) ($event['Exten'] ?? ''));
         if ($number === '') return;
-        $call = CallRecord::firstOrCreate(['asterisk_uniqueid' => $uniqueId], [
-            'tenant_id' => $extension->tenant_id,
-            'extension_id' => $extension->id,
-            'asterisk_linkedid' => $event['Linkedid'] ?? $uniqueId,
-            'direction' => 'outbound',
-            'from_number' => (string) $extension->number,
-            'to_number' => $number,
-            'status' => 'dialing',
-            'started_at' => now(),
-        ]);
+        $call = CallRecord::query()->where('asterisk_uniqueid', $uniqueId)->first();
+        if (! $call) {
+            // O webphone grava imediatamente como contingÃªncia. Quando o evento
+            // AMI chega, ele passa a ser o mesmo registro, sem duplicar histÃ³rico.
+            $call = CallRecord::query()->where('extension_id', $extension->id)
+                ->where('asterisk_uniqueid', 'like', 'web-%')->whereNull('ended_at')
+                ->where('to_number', $number)->where('started_at', '>=', now()->subMinutes(2))
+                ->latest('id')->first();
+        }
+        if ($call) {
+            $call->update(['asterisk_uniqueid' => $uniqueId, 'asterisk_linkedid' => $event['Linkedid'] ?? $uniqueId, 'status' => 'dialing']);
+        } else {
+            $call = CallRecord::create([
+                'tenant_id' => $extension->tenant_id,
+                'extension_id' => $extension->id,
+                'asterisk_uniqueid' => $uniqueId,
+                'asterisk_linkedid' => $event['Linkedid'] ?? $uniqueId,
+                'direction' => 'outbound',
+                'from_number' => (string) $extension->number,
+                'to_number' => $number,
+                'status' => 'dialing',
+                'started_at' => now(),
+            ]);
+        }
 
         if ($extension->tenant->record_calls) {
             $deleteAfter = $extension->tenant->recording_retention_days

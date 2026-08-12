@@ -759,8 +759,16 @@ if (config) {
     };
 
     // Asterisk AMI is the source of truth for call state and recordings.
-    const persistCallStart = async () => null;
-    const updateCall = async () => null;
+    // O registro no navegador Ã© uma redundÃ¢ncia do AMI: se o listener estiver
+    // em reconexÃ£o, a chamada e a gravaÃ§Ã£o continuam aparecendo no sistema.
+    const persistCallStart = async (direction, remoteNumber) => api(config.callsBaseUrl, {
+        method: 'POST',
+        body: JSON.stringify({ direction, remote_number: remoteNumber }),
+    });
+    const updateCall = async (callId, status, durationSeconds = null) => api(`${config.callsBaseUrl}/${callId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, ...(durationSeconds === null ? {} : { duration_seconds: durationSeconds }) }),
+    });
 
     const startRecording = async (session) => {
         if (!config.recordCalls || typeof MediaRecorder === 'undefined' || !session.connection) return;
@@ -822,7 +830,11 @@ if (config) {
         const recording = await stopRecording();
 
         try {
-            await currentCallPromise;
+            let call = await currentCallPromise;
+            if (!call?.id) return started;
+            if (recording) call = await uploadRecording(call.id, recording);
+            call = await updateCall(call.id, status, durationSeconds);
+            renderHistory(call);
         } catch (error) {
             console.warn('Não foi possível salvar o histórico da chamada.', error);
         }
@@ -992,7 +1004,9 @@ if (config) {
             elements.hangupButton.disabled = false;
             startTimer();
             try {
-                await currentCallPromise;
+                const call = await currentCallPromise;
+                if (call?.id) await updateCall(call.id, 'answered');
+                await startRecording(session);
             } catch (error) {
                 console.warn('Não foi possível iniciar o registro da chamada.', error);
             }
