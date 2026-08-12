@@ -26,6 +26,18 @@ class AuthenticationFlowTest extends TestCase
         $this->get('/entrar')->assertOk()->assertDontSee('Empresa Teste')->assertDontSee('empresa-teste')->assertDontSee('name="tenant"', false);
     }
 
+    public function test_login_assets_use_https_behind_the_reverse_proxy(): void
+    {
+        $this->withHeaders([
+            'X-Forwarded-Proto' => 'https',
+            'X-Forwarded-Host' => 'pabx.thconect.com.br',
+            'X-Forwarded-Port' => '443',
+        ])->get('/entrar')
+            ->assertOk()
+            ->assertSee('https://pabx.thconect.com.br/build/assets/', false)
+            ->assertDontSee('http://pabx.thconect.com.br/build/assets/', false);
+    }
+
     public function test_internal_extension_authenticates_without_calling_the_legacy_dialer(): void
     {
         $this->withoutMiddleware(PreventRequestForgery::class);

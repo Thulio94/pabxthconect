@@ -16,6 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // A aplicação não publica o PHP-FPM diretamente; todas as requisições
+        // externas chegam pelo Traefik do Easypanel e pelo Nginx do Compose.
+        $middleware->trustProxies(at: '*');
+
         $middleware->alias([
             'password.changed' => EnsurePasswordChanged::class,
             'sip.session' => EnsureSipSession::class,
