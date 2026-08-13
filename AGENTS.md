@@ -14,6 +14,7 @@ Estas instruções se aplicam a todo o repositório. Antes de alterar telefonia,
 8. Não renomear serviços ou volumes de produção, nem publicar PostgreSQL, Redis, PHP-FPM ou AMI.
 9. Alterações de senha/ramal precisam atualizar banco, arquivos PJSIP e recarregar o Asterisk como uma única operação.
 10. Nunca testar uma chamada real ou executar mudança destrutiva em produção sem autorização explícita.
+11. O PBX somente origina chamadas: UDP 5060 não deve ser publicado. Regras de firewall para 5060 devem filtrar apenas entrada pela interface pública e nunca bloquear a saída do Asterisk para o softswitch.
 
 ## Validação obrigatória antes de publicar
 

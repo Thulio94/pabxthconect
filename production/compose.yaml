@@ -178,9 +178,6 @@ services:
       PBX_PUBLIC_IP: ${PBX_PUBLIC_IP:?Defina PBX_PUBLIC_IP no Easypanel}
       PBX_LOCAL_NET: ${PBX_LOCAL_NET:-10.0.0.0/8}
     ports:
-      - target: 5060
-        published: 5060
-        protocol: udp
       - target: 10000
         published: 10000
         protocol: udp
