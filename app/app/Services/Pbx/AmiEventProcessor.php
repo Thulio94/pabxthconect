@@ -6,19 +6,19 @@ use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\Recording;
 use App\Models\SipTrunk;
+use App\Support\CallOutcome;
 use Illuminate\Support\Facades\Storage;
 
 class AmiEventProcessor
 {
-    public function __construct(private readonly CallRecordMatcher $matcher)
-    {
-    }
+    public function __construct(private readonly CallRecordMatcher $matcher) {}
 
     public function process(array $event): void
     {
         match ($event['Event'] ?? '') {
             'Newchannel' => $this->newChannel($event),
             'DialBegin' => $this->dialBegin($event),
+            'DialEnd' => $this->dialEnd($event),
             'BridgeEnter' => $this->bridgeEnter($event),
             'MixMonitorStop' => $this->mixMonitorStop($event),
             'Hangup' => $this->hangup($event),
@@ -30,10 +30,14 @@ class AmiEventProcessor
     {
         $extension = $this->extensionFromChannel($event['Channel'] ?? '');
         $uniqueId = $event['Uniqueid'] ?? null;
-        if (! $extension || ! $uniqueId) return;
+        if (! $extension || ! $uniqueId) {
+            return;
+        }
 
         $number = preg_replace('/\D+/', '', (string) ($event['Exten'] ?? ''));
-        if ($number === '') return;
+        if ($number === '') {
+            return;
+        }
         $call = CallRecord::query()->where('asterisk_uniqueid', $uniqueId)->first();
         if (! $call) {
             // O webphone grava imediatamente como contingÃªncia. Quando o evento
@@ -78,7 +82,9 @@ class AmiEventProcessor
     private function dialBegin(array $event): void
     {
         $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
-        if (! $call) return;
+        if (! $call) {
+            return;
+        }
         $trunk = $this->trunkFromChannel($event['DestChannel'] ?? '');
         $call->update([
             'sip_trunk_id' => $trunk?->id,
@@ -90,7 +96,29 @@ class AmiEventProcessor
     private function bridgeEnter(array $event): void
     {
         $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
-        if ($call && ! $call->answered_at) $call->update(['answered_at' => now(), 'status' => 'answered']);
+        if ($call && ! $call->answered_at) {
+            $call->update(['answered_at' => now(), 'status' => 'answered']);
+        }
+    }
+
+    private function dialEnd(array $event): void
+    {
+        $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
+        if (! $call || $call->answered_at || $call->ended_at) {
+            return;
+        }
+
+        $dialStatus = strtoupper((string) ($event['DialStatus'] ?? ''));
+        $status = match ($dialStatus) {
+            'BUSY' => 'busy',
+            'NOANSWER' => 'no_answer',
+            'CANCEL' => 'cancelled',
+            'CHANUNAVAIL', 'CONGESTION' => 'unavailable',
+            default => null,
+        };
+        if ($status) {
+            $call->update(['status' => $status, 'hangup_cause' => $dialStatus]);
+        }
     }
 
     private function hangup(array $event): void
@@ -99,39 +127,61 @@ class AmiEventProcessor
         $linkedId = $event['Linkedid'] ?? null;
         $call = CallRecord::query()
             ->where(function ($query) use ($uniqueId, $linkedId) {
-                if ($uniqueId) $query->where('asterisk_uniqueid', $uniqueId);
-                if ($linkedId) $query->orWhere('asterisk_linkedid', $linkedId);
+                if ($uniqueId) {
+                    $query->where('asterisk_uniqueid', $uniqueId);
+                }
+                if ($linkedId) {
+                    $query->orWhere('asterisk_linkedid', $linkedId);
+                }
             })
             ->latest('id')
             ->first();
-        if (! $call || $call->ended_at) return;
+        if (! $call || $call->ended_at) {
+            return;
+        }
         $endedAt = now();
+        $fallback = in_array($call->status, ['busy', 'no_answer', 'voicemail', 'invalid_number', 'rejected', 'cancelled', 'unavailable'], true)
+            ? $call->status
+            : 'failed';
+        $status = $call->answered_at ? 'completed' : CallOutcome::fromCause($event['Cause-txt'] ?? $event['Cause'] ?? null, $fallback);
         $call->update([
             'ended_at' => $endedAt,
-            'duration_seconds' => max(0, $call->started_at?->diffInSeconds($endedAt) ?? 0),
-            'status' => $call->answered_at ? 'completed' : 'failed',
+            'duration_seconds' => $call->answered_at ? max(0, (int) floor($call->answered_at->diffInSeconds($endedAt))) : 0,
+            'status' => $status,
             'hangup_cause' => $event['Cause-txt'] ?? $event['Cause'] ?? null,
         ]);
-        $this->finalizeRecording($call, 20);
+        if ($call->answered_at) {
+            $this->finalizeRecording($call, 20);
+        } else {
+            $this->discardRecording($call);
+        }
     }
 
     private function mixMonitorStop(array $event): void
     {
         $call = $this->callFromIdentifiers($event['Uniqueid'] ?? null, $event['Linkedid'] ?? null);
-        if ($call) $this->finalizeRecording($call, 5);
+        if ($call?->answered_at) {
+            $this->finalizeRecording($call, 5);
+        }
     }
 
     private function finalizeRecording(CallRecord $call, int $attempts = 1): void
     {
         $recording = $call->recording;
-        if (! $recording || $recording->available_at) return;
+        if (! $recording || $recording->available_at) {
+            return;
+        }
 
         $nativePath = $call->asterisk_uniqueid && ! str_starts_with($call->asterisk_uniqueid, 'web-')
             ? "tenant-{$call->tenant_id}/{$call->asterisk_uniqueid}.wav"
             : $recording->path;
         $disk = Storage::disk('pbx_recordings');
-        for ($attempt = 0; $attempt < $attempts && ! $disk->exists($nativePath); $attempt++) usleep(100_000);
-        if (! $disk->exists($nativePath)) return;
+        for ($attempt = 0; $attempt < $attempts && ! $disk->exists($nativePath); $attempt++) {
+            usleep(100_000);
+        }
+        if (! $disk->exists($nativePath) || $disk->size($nativePath) <= 44) {
+            return;
+        }
 
         clearstatcache(true, $disk->path($nativePath));
         $recording->update([
@@ -144,12 +194,33 @@ class AmiEventProcessor
         ]);
     }
 
+    private function discardRecording(CallRecord $call): void
+    {
+        $recording = $call->recording;
+        if (! $recording) {
+            return;
+        }
+
+        $disk = Storage::disk($recording->storage_disk ?: 'pbx_recordings');
+        if ($recording->path && $disk->exists($recording->path)) {
+            $disk->delete($recording->path);
+        }
+        $recording->update(['available_at' => null, 'size_bytes' => null, 'deleted_at' => now()]);
+    }
+
     private function callFromIdentifiers(?string $uniqueId, ?string $linkedId): ?CallRecord
     {
-        if (! $uniqueId && ! $linkedId) return null;
+        if (! $uniqueId && ! $linkedId) {
+            return null;
+        }
+
         return CallRecord::query()->where(function ($query) use ($uniqueId, $linkedId) {
-            if ($uniqueId) $query->where('asterisk_uniqueid', $uniqueId);
-            if ($linkedId) $query->orWhere('asterisk_linkedid', $linkedId);
+            if ($uniqueId) {
+                $query->where('asterisk_uniqueid', $uniqueId);
+            }
+            if ($linkedId) {
+                $query->orWhere('asterisk_linkedid', $linkedId);
+            }
         })->latest('id')->first();
     }
 
@@ -161,20 +232,29 @@ class AmiEventProcessor
         if (preg_match('/PJSIP\/ext-(\d+)-/', $channel, $matches)) {
             return Extension::query()->with('tenant')->find($matches[1]);
         }
+
         return null;
     }
 
     private function trunkFromChannel(string $channel): ?SipTrunk
     {
-        if (! preg_match('/PJSIP\/trunk-(\d+)-/', $channel, $matches)) return null;
+        if (! preg_match('/PJSIP\/trunk-(\d+)-/', $channel, $matches)) {
+            return null;
+        }
+
         return SipTrunk::find($matches[1]);
     }
 
     private function callFromChannel(string $channel, ?string $uniqueId): ?CallRecord
     {
-        if ($uniqueId && ($call = CallRecord::query()->where('asterisk_uniqueid', $uniqueId)->first())) return $call;
+        if ($uniqueId && ($call = CallRecord::query()->where('asterisk_uniqueid', $uniqueId)->first())) {
+            return $call;
+        }
         $extension = $this->extensionFromChannel($channel);
-        if (! $extension || ! preg_match('/-(\d+)$/', $channel, $matches)) return null;
+        if (! $extension || ! preg_match('/-(\d+)$/', $channel, $matches)) {
+            return null;
+        }
+
         return CallRecord::query()->where('asterisk_uniqueid', 'like', '%'.$matches[1])->where('extension_id', $extension->id)->latest('id')->first();
     }
 }

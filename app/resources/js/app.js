@@ -767,11 +767,16 @@ if (config) {
     };
 
     const statusLabel = (status) => ({
-        completed: 'Finalizada',
+        completed: 'Atendida',
         failed: 'Não completada',
         rejected: 'Recusada',
         cancelled: 'Cancelada',
-        answered: 'Atendida',
+        answered: 'Em atendimento',
+        no_answer: 'Não atendida',
+        busy: 'Ocupado',
+        voicemail: 'Caixa de mensagens',
+        invalid_number: 'Número não existe',
+        unavailable: 'Indisponível',
         ringing: 'Tocando',
         dialing: 'Chamando',
     }[status] || 'Iniciada');
@@ -833,7 +838,7 @@ if (config) {
         row.append(numberCell);
         row.append(createCell(directionLabel(call.direction)));
         row.append(createCell(dateLabel(call.started_at)));
-        row.append(createCell(statusLabel(call.status)));
+        row.append(createCell(call.result_label || statusLabel(call.status)));
 
         const durationCell = document.createElement('td');
         const duration = document.createElement('code');
@@ -894,9 +899,9 @@ if (config) {
         method: 'POST',
         body: JSON.stringify({ direction, remote_number: remoteNumber }),
     });
-    const updateCall = async (callId, status, durationSeconds = null) => api(`${config.callsBaseUrl}/${callId}`, {
+    const updateCall = async (callId, status, durationSeconds = null, outcome = {}) => api(`${config.callsBaseUrl}/${callId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ status, ...(durationSeconds === null ? {} : { duration_seconds: durationSeconds }) }),
+        body: JSON.stringify({ status, ...(durationSeconds === null ? {} : { duration_seconds: durationSeconds }), ...outcome }),
     });
 
     const startRecording = async (session) => {
@@ -952,7 +957,7 @@ if (config) {
         return api(`${config.callsBaseUrl}/${callId}/gravacao`, { method: 'POST', body: form });
     };
 
-    const finishCall = async (status, started) => {
+    const finishCall = async (status, started, outcome = {}) => {
         if (callFinished) return;
         callFinished = true;
         const durationSeconds = callStartedAt ? Math.floor((Date.now() - callStartedAt.getTime()) / 1000) : 0;
@@ -962,7 +967,7 @@ if (config) {
             let call = await currentCallPromise;
             if (!call?.id) return started;
             if (recording) call = await uploadRecording(call.id, recording);
-            call = await updateCall(call.id, status, durationSeconds);
+            call = await updateCall(call.id, status, durationSeconds, outcome);
             renderHistory(call);
         } catch (error) {
             console.warn('Não foi possível salvar o histórico da chamada.', error);
@@ -975,8 +980,9 @@ if (config) {
 
     const callFailureMessage = (event) => {
         const cause = String(event?.cause || '');
-        const statusCode = Number(event?.message?.status_code || 0);
-        const reasonPhrase = String(event?.message?.reason_phrase || '');
+        const response = event?.message || event?.response;
+        const statusCode = Number(response?.status_code || 0);
+        const reasonPhrase = String(response?.reason_phrase || '');
         const detail = `${cause} ${reasonPhrase}`.toLowerCase();
         const sipCode = statusCode ? ` (SIP ${statusCode}${reasonPhrase ? ` — ${reasonPhrase}` : ''})` : '';
 
@@ -1167,7 +1173,8 @@ if (config) {
             }
 
             const result = direction === 'incoming' && !callStartedAt ? 'rejected' : 'failed';
-            const statusCode = Number(event?.message?.status_code || 0);
+            const sipResponse = event?.message || event?.response;
+            const statusCode = Number(sipResponse?.status_code || 0);
             const testedFormats = direction === 'outgoing' && outgoingDial && outgoingDial.variants.length > 1
                 ? ` Formatos testados: ${outgoingDial.variants.slice(0, outgoingDial.index + 1).join(', ')}.`
                 : '';
@@ -1177,7 +1184,10 @@ if (config) {
                 statusCode: event?.message?.status_code || null,
                 reasonPhrase: event?.message?.reason_phrase || null,
             });
-            await finishCall(result, initiatedAt);
+            await finishCall(result, initiatedAt, {
+                ...(statusCode ? { sip_code: statusCode } : {}),
+                ...(sipResponse?.reason_phrase ? { reason_phrase: sipResponse.reason_phrase } : {}),
+            });
             resetCallUi();
             setLineState('Chamada não completada', failureMessage, 'error');
             restoreRegisteredStateLater();
@@ -1332,7 +1342,7 @@ if (config) {
         drawerCopyButton.textContent = 'Copiar';
         document.querySelector('#drawerNumber').textContent = call.remote_number || 'Não identificado';
         document.querySelector('#drawerDirection').textContent = directionLabel(call.direction);
-        document.querySelector('#drawerStatus').textContent = statusLabel(call.status);
+        document.querySelector('#drawerStatus').textContent = call.result_label || statusLabel(call.status);
         document.querySelector('#drawerStarted').textContent = dateLabel(call.started_at);
         document.querySelector('#drawerAnswered').textContent = dateLabel(call.answered_at);
         document.querySelector('#drawerEnded').textContent = dateLabel(call.ended_at);
@@ -1638,6 +1648,12 @@ if (supervisionConfig) {
     const tenantSelect = document.querySelector('#supervisionTenant');
     const tableBody = document.querySelector('#supervisionAgents');
     const search = document.querySelector('#agentSearch');
+    const searchBar = search?.closest('.agent-search');
+    const toggleOffline = document.createElement('button');
+    toggleOffline.type = 'button';
+    toggleOffline.className = 'offline-toggle';
+    toggleOffline.setAttribute('aria-pressed', 'false');
+    searchBar?.after(toggleOffline);
     const connection = document.querySelector('#supervisionConnection');
     const audio = document.querySelector('#supervisionAudio');
     const toast = document.querySelector('#supervisionToast');
@@ -1660,6 +1676,9 @@ if (supervisionConfig) {
     let startingSpy = false;
     let toastTimer = null;
     let selectedOperator = null;
+    let showOffline = false;
+    let sortKey = 'number';
+    let sortDirection = 'asc';
 
     const socket = new JsSIP.WebSocketInterface(supervisionConfig.websocketUrl);
     const ua = new JsSIP.UA({ uri: supervisionConfig.uri, password: supervisionConfig.password, sockets: [socket], register: true, session_timers: false });
@@ -1676,15 +1695,36 @@ if (supervisionConfig) {
         clearTimeout(toastTimer); toast.textContent = message; toast.hidden = false;
         toastTimer = setTimeout(() => { toast.hidden = true; }, 5000);
     };
-    const duration = (seconds) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    const duration = (seconds) => {
+        const total = Math.max(0, Math.floor(Number(seconds) || 0));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const value = `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        return hours ? `${hours}:${value}` : value;
+    };
     const elapsed = (date) => date ? Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 1000)) : 0;
     const node = (tag, className, text) => { const element = document.createElement(tag); if (className) element.className = className; if (text !== undefined) element.textContent = text; return element; };
 
     const render = () => {
         const term = search.value.trim().toLowerCase();
-        const visible = agents.filter((agent) => `${agent.name} ${agent.email} ${agent.number}`.toLowerCase().includes(term));
+        const offlineCount = agents.filter((agent) => agent.state === 'offline').length;
+        toggleOffline.textContent = showOffline ? 'Ocultar offline' : `Exibir offline (${offlineCount})`;
+        toggleOffline.setAttribute('aria-pressed', String(showOffline));
+        const statusOrder = { talking: 0, calling: 1, paused: 2, available: 3, offline: 4 };
+        const comparable = (agent) => ({
+            number: Number(agent.number) || 0, agent: `${agent.name} ${agent.email} ${agent.number}`.toLowerCase(),
+            status: statusOrder[agent.state] ?? 9, logged_seconds: agent.logged_seconds,
+            calls_today: agent.calls_today, talk_seconds: agent.talk_seconds, pause_seconds: agent.pause_seconds,
+        }[sortKey]);
+        const visible = agents
+            .filter((agent) => (showOffline || agent.state !== 'offline') && `${agent.name} ${agent.email} ${agent.number}`.toLowerCase().includes(term))
+            .sort((a, b) => {
+                const left = comparable(a); const right = comparable(b);
+                const result = typeof left === 'string' ? left.localeCompare(right, 'pt-BR') : left - right;
+                return sortDirection === 'asc' ? result : -result;
+            });
         tableBody.replaceChildren();
-        document.querySelector('#agentTotal').textContent = agents.length;
+        document.querySelector('#agentTotal').textContent = agents.filter((agent) => agent.state !== 'offline').length;
         document.querySelectorAll('[data-state-counter]').forEach((counter) => { counter.querySelector('b').textContent = agents.filter((agent) => agent.state === counter.dataset.stateCounter).length; });
         if (!visible.length) { const row = node('tr'); const cell = node('td', 'empty-cell', 'Nenhum agente encontrado.'); cell.colSpan = 7; row.append(cell); tableBody.append(row); return; }
         visible.forEach((agent) => {
@@ -1702,6 +1742,25 @@ if (supervisionConfig) {
             actionCell.append(actions); row.append(identityCell, statusCell, loggedCell, callsCell, talkCell, pauseCell, actionCell); tableBody.append(row);
         });
     };
+
+    const sortableColumns = [
+        ['agent', 'Agente'], ['status', 'Status'], ['logged_seconds', 'Tempo logado'],
+        ['calls_today', 'Ligações'], ['talk_seconds', 'Em chamada'], ['pause_seconds', 'Pausas'],
+    ];
+    document.querySelectorAll('.supervision-table thead th').forEach((header, index) => {
+        if (!sortableColumns[index]) return;
+        const [key, label] = sortableColumns[index];
+        const button = node('button', 'supervision-sort', label); button.type = 'button'; button.dataset.sort = key;
+        button.addEventListener('click', () => {
+            sortDirection = sortKey === key && sortDirection === 'asc' ? 'desc' : 'asc';
+            sortKey = key;
+            document.querySelectorAll('.supervision-sort').forEach((item) => item.classList.toggle('active', item === button));
+            button.dataset.direction = sortDirection;
+            render();
+        });
+        header.replaceChildren(button);
+    });
+    toggleOffline.addEventListener('click', () => { showOffline = !showOffline; render(); });
 
     const forceLogoutAgent = async (agent, button) => {
         if (!window.confirm(`Deslogar ${agent.name} do telefone agora? A ação será registrada na auditoria.`)) return;

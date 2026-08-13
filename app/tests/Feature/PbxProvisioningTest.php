@@ -57,8 +57,10 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString('identify_by=username,auth_username', $endpoints);
         $this->assertStringContainsString('Set(TH_DEST=${FILTER(0-9,${EXTEN})})', $dialplan);
         $this->assertStringContainsString('Set(TH_DEST=55${TH_DEST})', $dialplan);
-        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',60,g)', $dialplan);
-        $this->assertStringContainsString('Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id.',60,g)', $dialplan);
+        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,g)', $dialplan);
+        $this->assertStringContainsString('Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id.',40,g)', $dialplan);
+        $this->assertStringContainsString('StopMixMonitor()', $dialplan);
+        $this->assertStringContainsString('System(rm -f "${RECORDING_ROOT}/${CALL_RECORDING_FILE}")', $dialplan);
         $this->assertLessThan(
             strpos($dialplan, 'Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id),
             strpos($dialplan, 'Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id),

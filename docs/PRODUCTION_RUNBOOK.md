@@ -17,7 +17,7 @@ Exemplo: número `17 3621-4392` e TECH `8033` resultam em `8033551736214392`.
 - O navegador nunca recebe nem envia a TECH.
 - A TECH vem de `sip_trunks.tech_prefix`.
 - O vínculo e a prioridade vêm de `tenant_sip_trunks`.
-- O Asterisk deve mostrar `Dial(PJSIP/TECH${TH_DEST}@trunk-ID,60,g)`.
+- O Asterisk deve mostrar `Dial(PJSIP/TECH${TH_DEST}@trunk-ID,40,g)`.
 - `t1-e999` e `t3-e999` são ramais técnicos de tenants diferentes. Sempre diagnosticar o tenant observado no canal e não assumir a empresa pelo número visível do ramal.
 
 ## Serviços e nomes operacionais

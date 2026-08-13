@@ -30,7 +30,7 @@ class AmiEventProcessorTest extends TestCase
         $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId, 'Linkedid' => $uniqueId, 'Exten' => '551736214392']);
         $processor->process(['Event' => 'DialBegin', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId, 'DestChannel' => "PJSIP/trunk-{$trunk->id}-00000002"]);
         $processor->process(['Event' => 'BridgeEnter', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId]);
-        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$uniqueId}.wav", 'audio');
+        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$uniqueId}.wav", str_repeat('a', 100));
         $processor->process(['Event' => 'Hangup', 'Uniqueid' => $uniqueId, 'Cause-txt' => 'Normal Clearing']);
 
         $this->assertDatabaseHas('call_records', ['asterisk_uniqueid' => $uniqueId, 'extension_id' => $extension->id, 'sip_trunk_id' => $trunk->id, 'status' => 'completed']);
@@ -49,7 +49,7 @@ class AmiEventProcessorTest extends TestCase
 
         $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000010", 'Uniqueid' => $linkedId, 'Linkedid' => $linkedId, 'Exten' => '5511999990000']);
         $processor->process(['Event' => 'BridgeEnter', 'Channel' => "PJSIP/{$extension->sip_username}-00000010", 'Uniqueid' => $linkedId]);
-        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$linkedId}.wav", 'audio');
+        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$linkedId}.wav", str_repeat('a', 100));
         $processor->process(['Event' => 'Hangup', 'Uniqueid' => '1723480000.11', 'Linkedid' => $linkedId, 'Cause-txt' => 'Normal Clearing']);
 
         $call = CallRecord::where('asterisk_linkedid', $linkedId)->firstOrFail();
@@ -77,14 +77,16 @@ class AmiEventProcessorTest extends TestCase
         $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000099", 'Uniqueid' => $uniqueId, 'Linkedid' => $uniqueId, 'Exten' => '5511999990000']);
         $this->assertSame("tenant-{$tenant->id}/{$uniqueId}.wav", $call->fresh()->recording->path);
 
-        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$uniqueId}.wav", 'audio-finalizado');
+        $processor->process(['Event' => 'BridgeEnter', 'Channel' => "PJSIP/{$extension->sip_username}-00000099", 'Uniqueid' => $uniqueId]);
+        Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$uniqueId}.wav", str_repeat('a', 100));
         $processor->process(['Event' => 'MixMonitorStop', 'Uniqueid' => $uniqueId, 'Linkedid' => $uniqueId]);
 
         $recording = $call->fresh()->recording;
         $this->assertNotNull($recording->available_at);
         $this->assertSame('audio/wav', $recording->mime_type);
-        $this->assertSame(strlen('audio-finalizado'), $recording->size_bytes);
+        $this->assertSame(100, $recording->size_bytes);
     }
+
     public function test_ami_matches_browser_call_when_number_changes_from_national_to_e164(): void
     {
         Storage::fake('pbx_recordings');
@@ -105,5 +107,26 @@ class AmiEventProcessorTest extends TestCase
 
         $this->assertDatabaseCount('call_records', 1);
         $this->assertSame('1723480001.01', $call->fresh()->asterisk_uniqueid);
+    }
+
+    public function test_unanswered_call_discards_empty_wav_and_keeps_human_result(): void
+    {
+        Storage::fake('pbx_recordings');
+        $tenant = Tenant::create(['name' => 'Empresa Sem Resposta', 'slug' => 'sem-resposta', 'status' => 'active', 'record_calls' => true]);
+        $user = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'segredo', 'status' => 'active']);
+        $uniqueId = '1723480002.01';
+        $path = "tenant-{$tenant->id}/{$uniqueId}.wav";
+        $processor = app(AmiEventProcessor::class);
+
+        $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000102", 'Uniqueid' => $uniqueId, 'Linkedid' => $uniqueId, 'Exten' => '5581999990000']);
+        Storage::disk('pbx_recordings')->put($path, str_repeat('a', 44));
+        $processor->process(['Event' => 'Hangup', 'Uniqueid' => $uniqueId, 'Cause' => 18, 'Cause-txt' => 'No user responding']);
+
+        $call = CallRecord::where('asterisk_uniqueid', $uniqueId)->firstOrFail();
+        $this->assertSame('no_answer', $call->status);
+        $this->assertSame(0, $call->duration_seconds);
+        $this->assertNotNull($call->recording?->deleted_at);
+        Storage::disk('pbx_recordings')->assertMissing($path);
     }
 }

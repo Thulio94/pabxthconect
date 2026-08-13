@@ -21,10 +21,17 @@ class RecordingReconciler
             ->get()
             ->each(function (Recording $recording) use ($disk, &$recovered): void {
                 $call = $recording->call;
-                if (! $call?->asterisk_uniqueid || str_starts_with($call->asterisk_uniqueid, 'web-')) return;
+                if (! $call?->asterisk_uniqueid || str_starts_with($call->asterisk_uniqueid, 'web-')) {
+                    return;
+                }
+                if (! $call->answered_at) {
+                    return;
+                }
 
                 $path = "tenant-{$call->tenant_id}/{$call->asterisk_uniqueid}.wav";
-                if (! $disk->exists($path)) return;
+                if (! $disk->exists($path) || $disk->size($path) <= 44) {
+                    return;
+                }
 
                 clearstatcache(true, $disk->path($path));
                 $recording->update([

@@ -50,7 +50,7 @@ class AgentDashboardController extends Controller
 
     private function historyFilters(Request $request): array
     {
-        $allowedStatuses = ['completed', 'failed', 'rejected', 'cancelled', 'answered', 'ringing', 'dialing'];
+        $allowedStatuses = ['completed', 'failed', 'rejected', 'cancelled', 'answered', 'ringing', 'dialing', 'busy', 'no_answer', 'voicemail', 'invalid_number', 'unavailable'];
         $normalizeDate = static function (mixed $value): ?string {
             if (! is_string($value) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
                 return null;
@@ -87,6 +87,8 @@ class AgentDashboardController extends Controller
 
     private function callPayload(CallRecord $call): array
     {
-        return ['id' => $call->id, 'remote_number' => $call->to_number, 'direction' => $call->direction, 'status' => $call->status, 'started_at' => $call->started_at?->toIso8601String(), 'answered_at' => $call->answered_at?->toIso8601String(), 'ended_at' => $call->ended_at?->toIso8601String(), 'duration_seconds' => $call->duration_seconds, 'has_recording' => $call->recording?->available_at !== null, 'recording_url' => $call->recording?->available_at ? route('phone.call-records.recording', $call) : null];
+        $playable = $call->recording?->isPlayable() ?? false;
+
+        return ['id' => $call->id, 'remote_number' => $call->to_number, 'direction' => $call->direction, 'status' => $call->status, 'result_label' => $call->resultLabel(), 'started_at' => $call->started_at?->toIso8601String(), 'answered_at' => $call->answered_at?->toIso8601String(), 'ended_at' => $call->ended_at?->toIso8601String(), 'duration_seconds' => $call->effectiveDurationSeconds(), 'has_recording' => $playable, 'recording_url' => $playable ? route('phone.call-records.recording', $call) : null];
     }
 }

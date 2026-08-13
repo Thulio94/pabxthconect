@@ -7,6 +7,7 @@ use App\Models\Extension;
 use App\Models\Recording;
 use App\Services\OperatorActivityRecorder;
 use App\Services\Pbx\CallRecordMatcher;
+use App\Support\CallOutcome;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -49,6 +50,7 @@ class PhoneCallController extends Controller
         }
 
         $activity->log($extension, $request->user(), 'call_started', 'Iniciou uma chamada.', ['direction' => $data['direction'], 'number' => $number, 'call_record_id' => $call->id]);
+
         return response()->json($this->payload($call), 201);
     }
 
@@ -56,20 +58,38 @@ class PhoneCallController extends Controller
     {
         $extension = $this->authorizeSession($request, $callRecord);
         $data = $request->validate([
-            'status' => ['required', Rule::in(['answered', 'completed', 'failed', 'rejected', 'cancelled'])],
+            'status' => ['required', Rule::in(['answered', 'completed', 'failed', 'rejected', 'cancelled', 'busy', 'no_answer', 'voicemail', 'invalid_number', 'unavailable'])],
             'duration_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
+            'sip_code' => ['nullable', 'integer', 'between:100,699'],
+            'reason_phrase' => ['nullable', 'string', 'max:255'],
         ]);
-        $updates = ['status' => $data['status']];
-        if ($data['status'] === 'answered' && $callRecord->answered_at === null) $updates['answered_at'] = now();
-        if (in_array($data['status'], ['completed', 'failed', 'rejected', 'cancelled'], true)) {
+
+        $requestedStatus = $data['status'];
+        $status = in_array($requestedStatus, ['failed', 'rejected', 'cancelled'], true) && ! $callRecord->answered_at
+            ? CallOutcome::fromSip($data['sip_code'] ?? null, $data['reason_phrase'] ?? null, $requestedStatus)
+            : $requestedStatus;
+        $terminal = ['completed', 'failed', 'rejected', 'cancelled', 'busy', 'no_answer', 'voicemail', 'invalid_number', 'unavailable'];
+        if ($callRecord->ended_at && in_array($callRecord->status, $terminal, true)) {
+            $status = $callRecord->status;
+        }
+
+        $updates = ['status' => $status];
+        if ($status === 'answered' && $callRecord->answered_at === null) {
+            $updates['answered_at'] = now();
+        }
+        if (in_array($status, $terminal, true)) {
             $updates['ended_at'] = now();
-            $measured = (int) ($data['duration_seconds'] ?? 0);
-            $updates['duration_seconds'] = max($measured, $callRecord->effectiveDurationSeconds());
+            $updates['duration_seconds'] = $callRecord->answered_at
+                ? max((int) ($data['duration_seconds'] ?? 0), $callRecord->effectiveDurationSeconds())
+                : 0;
+            if (isset($data['sip_code']) || isset($data['reason_phrase'])) {
+                $updates['hangup_cause'] = trim('SIP '.($data['sip_code'] ?? '').' '.($data['reason_phrase'] ?? ''));
+            }
         }
         $callRecord->update($updates);
 
-        $labels = ['answered' => 'Atendeu a chamada.', 'completed' => 'Finalizou a chamada.', 'failed' => 'Chamada não completada.', 'rejected' => 'Recusou a chamada.', 'cancelled' => 'Cancelou a chamada.'];
-        $activity->log($extension, $request->user(), 'call_'.$data['status'], $labels[$data['status']], ['number' => $callRecord->to_number, 'call_record_id' => $callRecord->id]);
+        $activity->log($extension, $request->user(), 'call_'.$status, CallOutcome::label($status).'.', ['number' => $callRecord->to_number, 'call_record_id' => $callRecord->id]);
+
         return response()->json($this->payload($callRecord->fresh('recording')));
     }
 
@@ -77,6 +97,7 @@ class PhoneCallController extends Controller
     {
         $this->authorizeSession($request, $callRecord);
         abort_unless($callRecord->tenant()->value('record_calls'), 403);
+        abort_unless($callRecord->answered_at, 422, 'Esta chamada não foi atendida e não possui áudio válido.');
         $request->validate(['recording' => ['required', 'file', 'max:51200', 'mimetypes:audio/webm,audio/ogg,audio/mp4,video/webm,application/octet-stream']]);
 
         $file = $request->file('recording');
@@ -87,12 +108,8 @@ class PhoneCallController extends Controller
         $path = "tenant-{$callRecord->tenant_id}/browser-{$callRecord->id}.{$extension}";
         Storage::disk('pbx_recordings')->put($path, $file->getContent());
         $recording->fill([
-            'storage_disk' => 'pbx_recordings',
-            'path' => $path,
-            'mime_type' => $file->getMimeType(),
-            'size_bytes' => $file->getSize(),
-            'available_at' => now(),
-            'deleted_at' => null,
+            'storage_disk' => 'pbx_recordings', 'path' => $path, 'mime_type' => $file->getMimeType(),
+            'size_bytes' => $file->getSize(), 'available_at' => now(), 'deleted_at' => null,
         ]);
         if (! $recording->delete_after && $callRecord->tenant?->recording_retention_days) {
             $recording->delete_after = now()->addDays($callRecord->tenant->recording_retention_days);
@@ -106,33 +123,35 @@ class PhoneCallController extends Controller
     {
         $extension = Extension::query()->with('tenant')->find($agent['extension_id'] ?? null);
         abort_unless($extension && $extension->tenant_id === ($agent['tenant_id'] ?? null), 403);
+
         return $extension;
     }
 
     private function authorizeSession(Request $request, CallRecord $callRecord): Extension
     {
         $agent = $request->session()->get('sip_agent');
-        abort_unless(
-            $callRecord->tenant_id === ($agent['tenant_id'] ?? null) && $callRecord->extension_id === ($agent['extension_id'] ?? null),
-            404,
-        );
+        abort_unless($callRecord->tenant_id === ($agent['tenant_id'] ?? null) && $callRecord->extension_id === ($agent['extension_id'] ?? null), 404);
+
         return $this->extensionFromSession($agent);
     }
 
     private function payload(CallRecord $call): array
     {
         $recording = $call->recording;
+        $playable = $recording?->isPlayable() ?? false;
+
         return [
             'id' => $call->id,
             'remote_number' => $call->direction === 'inbound' ? $call->from_number : $call->to_number,
             'direction' => $call->direction,
             'status' => $call->status,
+            'result_label' => $call->resultLabel(),
             'started_at' => $call->started_at?->toIso8601String(),
             'answered_at' => $call->answered_at?->toIso8601String(),
             'ended_at' => $call->ended_at?->toIso8601String(),
             'duration_seconds' => $call->effectiveDurationSeconds(),
-            'has_recording' => $recording?->available_at !== null,
-            'recording_url' => $recording?->available_at ? route('phone.call-records.recording', $call) : null,
+            'has_recording' => $playable,
+            'recording_url' => $playable ? route('phone.call-records.recording', $call) : null,
         ];
     }
 }

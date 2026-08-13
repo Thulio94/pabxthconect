@@ -22,9 +22,9 @@ class AdminRecordingTest extends TestCase
         $tenant = Tenant::create(['name' => 'Empresa Gravada', 'slug' => 'gravada', 'status' => 'active']);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
-        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '5511999990001', 'status' => 'answered', 'started_at' => now(), 'duration_seconds' => 12]);
-        $recording = Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/call.wav', 'mime_type' => 'audio/wav', 'available_at' => now()]);
-        Storage::disk('pbx_recordings')->put($recording->path, 'audio-content');
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '5511999990001', 'status' => 'answered', 'started_at' => now(), 'answered_at' => now(), 'duration_seconds' => 12]);
+        $recording = Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/call.wav', 'mime_type' => 'audio/wav', 'size_bytes' => 100, 'available_at' => now()]);
+        Storage::disk('pbx_recordings')->put($recording->path, str_repeat('a', 100));
 
         $this->actingAs($admin)->get('/administracao/gravacoes?phone=11999990001&status=answered')
             ->assertOk()->assertSee('Empresa Gravada')->assertSee('5511999990001')->assertSee('Atendida');
@@ -40,8 +40,8 @@ class AdminRecordingTest extends TestCase
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
 
         foreach (range(1, 26) as $index) {
-            $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '551199999'.str_pad((string) $index, 4, '0', STR_PAD_LEFT), 'status' => 'completed', 'started_at' => now()->subSeconds($index), 'duration_seconds' => $index]);
-            Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => "tenant-{$tenant->id}/call-{$index}.wav", 'mime_type' => 'audio/wav', 'available_at' => now()]);
+            $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '551199999'.str_pad((string) $index, 4, '0', STR_PAD_LEFT), 'status' => 'completed', 'started_at' => now()->subSeconds($index), 'answered_at' => now()->subSeconds($index), 'duration_seconds' => $index]);
+            Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => "tenant-{$tenant->id}/call-{$index}.wav", 'mime_type' => 'audio/wav', 'size_bytes' => 100, 'available_at' => now()]);
         }
 
         $this->actingAs($admin)->get('/administracao/gravacoes')
@@ -54,8 +54,8 @@ class AdminRecordingTest extends TestCase
         $tenant = Tenant::create(['name' => 'Empresa Horário', 'slug' => 'empresa-horario', 'status' => 'active']);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
-        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '5511999990001', 'status' => 'completed', 'started_at' => '2026-08-13 16:33:00']);
-        Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/time.wav', 'mime_type' => 'audio/wav', 'available_at' => now()]);
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '5511999990001', 'status' => 'completed', 'started_at' => '2026-08-13 16:33:00', 'answered_at' => '2026-08-13 16:33:01']);
+        Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/time.wav', 'mime_type' => 'audio/wav', 'size_bytes' => 100, 'available_at' => now()]);
 
         $this->actingAs($admin)->get('/administracao/gravacoes')
             ->assertOk()->assertSee('13/08/2026 13:33');

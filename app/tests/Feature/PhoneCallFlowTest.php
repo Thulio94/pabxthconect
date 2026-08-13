@@ -36,9 +36,9 @@ class PhoneCallFlowTest extends TestCase
     {
         Storage::fake('pbx_recordings');
         [$tenant, $extension] = $this->extension();
-        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => '5511999999999', 'status' => 'completed', 'started_at' => now(), 'ended_at' => now()]);
-        Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/test.wav', 'available_at' => now()]);
-        Storage::disk('pbx_recordings')->put('tenant-1/test.wav', 'audio-content');
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => '5511999999999', 'status' => 'completed', 'started_at' => now(), 'answered_at' => now(), 'ended_at' => now()]);
+        Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/test.wav', 'size_bytes' => 100, 'available_at' => now()]);
+        Storage::disk('pbx_recordings')->put('tenant-1/test.wav', str_repeat('a', 100));
 
         $this->actingAs($extension->user)->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
             ->get("/telefone/historico/{$call->id}/gravacao")->assertOk();
@@ -97,6 +97,7 @@ class PhoneCallFlowTest extends TestCase
         $user = User::factory()->create(['tenant_id' => $tenant->id]);
         $number = $suffix === '' ? 999 : 1000;
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => $number, 'sip_username' => "t{$tenant->id}-e{$number}", 'sip_secret' => 'senha-teste', 'status' => 'active']);
+
         return [$tenant, $extension];
     }
 

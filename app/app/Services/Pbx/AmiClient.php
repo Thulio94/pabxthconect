@@ -40,6 +40,10 @@ class AmiClient
                 if (($block['Event'] ?? null) !== 'CoreShowChannel') {
                     continue;
                 }
+                $bridgeId = trim((string) ($block['BridgeId'] ?? ''));
+                if ($bridgeId === '' || $bridgeId === '<none>') {
+                    continue;
+                }
                 if (preg_match('/PJSIP\\/(t\\d+-e\\d+)-/', $block['Channel'] ?? '', $matches)) {
                     $sipUsernames[] = $matches[1];
                 }

@@ -57,7 +57,7 @@ class AdminSupervisionTest extends TestCase
         $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
             ->assertOk()->assertJsonPath('agents.0.state', 'available');
 
-        $this->assertDatabaseHas('call_records', ['id' => $call->id, 'status' => 'failed']);
+        $this->assertDatabaseHas('call_records', ['id' => $call->id, 'status' => 'no_answer', 'duration_seconds' => 0]);
         $this->assertNotNull($call->fresh()->ended_at);
     }
 

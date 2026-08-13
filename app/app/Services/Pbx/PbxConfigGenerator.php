@@ -39,8 +39,8 @@ class PbxConfigGenerator
             $secret = $this->value($extension->sip_secret);
 
             return "[{$id}-auth]\ntype=auth\nauth_type=userpass\nusername={$username}\npassword={$secret}\n\n"
-                . "[{$id}]\ntype=aor\nmax_contacts=1\nremove_existing=yes\n\n"
-                . "[{$id}]\ntype=endpoint\ntransport=transport-ws\ncontext=extension-{$extension->id}\naors={$id}\nauth={$id}-auth\nidentify_by=username,auth_username\nset_var=SPYGROUP=extension-{$extension->id}\ndisallow=all\nallow=ulaw,alaw\nwebrtc=yes\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nice_support=yes\nmedia_encryption=dtls\ndtls_auto_generate_cert=yes\n\n";
+                ."[{$id}]\ntype=aor\nmax_contacts=1\nremove_existing=yes\n\n"
+                ."[{$id}]\ntype=endpoint\ntransport=transport-ws\ncontext=extension-{$extension->id}\naors={$id}\nauth={$id}-auth\nidentify_by=username,auth_username\nset_var=SPYGROUP=extension-{$extension->id}\ndisallow=all\nallow=ulaw,alaw\nwebrtc=yes\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nice_support=yes\nmedia_encryption=dtls\ndtls_auto_generate_cert=yes\n\n";
 
         })->implode('');
     }
@@ -63,8 +63,8 @@ class PbxConfigGenerator
             $codecs = collect($trunk->codecs ?: ['ulaw', 'alaw'])->map(fn ($codec) => $this->value($codec))->implode(',');
 
             return $auth
-                . "[{$id}-aor]\ntype=aor\ncontact=sip:{$host}:{$port}\nqualify_frequency=30\nqualify_timeout=3.0\n\n"
-                . "[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\n\n";
+                ."[{$id}-aor]\ntype=aor\ncontact=sip:{$host}:{$port}\nqualify_frequency=30\nqualify_timeout=3.0\n\n"
+                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\n\n";
         })->implode('');
     }
 
@@ -86,18 +86,21 @@ class PbxConfigGenerator
                 $label = $index === 0 ? '' : "({$next})";
 
                 return " same => n{$label},NoOp(Outbound route {$trunk->id} with configured TECH)\n"
-                    . " same => n,Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},60,g)\n"
-                    . " same => n,GotoIf(\$[\"\${DIALSTATUS}\"=\"ANSWER\"]?done)\n";
+                    ." same => n,Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},40,g)\n"
+                    ." same => n,GotoIf(\$[\"\${DIALSTATUS}\"=\"ANSWER\"]?done)\n";
             })->implode('');
 
             // The browser is intentionally unaware of the carrier TECH. It sends
             // a Brazilian destination and the PBX builds TECH + 55 + DDD + number.
             return "[tenant-{$tenant->id}]\nexten => _X.,1,NoOp(Outbound tenant {$tenant->id})\n"
-                . " same => n,Set(TH_DEST=\${FILTER(0-9,\${EXTEN})})\n"
-                . " same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=10]?Set(TH_DEST=55\${TH_DEST}))\n"
-                . " same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=11]?Set(TH_DEST=55\${TH_DEST}))\n"
-                . $recording.$routes
-                . " same => n(done),Return()\n\n";
+                ." same => n,Set(TH_DEST=\${FILTER(0-9,\${EXTEN})})\n"
+                ." same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=10]?Set(TH_DEST=55\${TH_DEST}))\n"
+                ." same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=11]?Set(TH_DEST=55\${TH_DEST}))\n"
+                .$recording.$routes
+                .($tenant->record_calls
+                    ? " same => n,StopMixMonitor()\n same => n,System(rm -f \"\${RECORDING_ROOT}/\${CALL_RECORDING_FILE}\")\n"
+                    : '')
+                ." same => n(done),Return()\n\n";
         })->implode('');
         $allExtensions = $tenants->flatMap(fn (Tenant $tenant) => $tenant->extensions);
         $extensionContexts = $allExtensions->map(function (Extension $extension) use ($allExtensions) {
@@ -112,8 +115,10 @@ class PbxConfigGenerator
             $outbound = $extension->user?->isTenantAdmin()
                 ? "exten => _X.,1,NoOp(Outbound blocked for tenant administrator {$extension->id})\n same => n,Hangup(21)\n"
                 : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Set(__SPYGROUP=extension-{$extension->id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
+
             return "[extension-{$extension->id}]\n{$supervision}{$outbound}\n";
         })->implode('');
+
         return $tenantContexts.$extensionContexts;
     }
 
@@ -134,6 +139,7 @@ class PbxConfigGenerator
         if (preg_match('/[\r\n;#]/', $value)) {
             throw new RuntimeException('Valor inválido para configuração SIP.');
         }
+
         return $value;
     }
 }

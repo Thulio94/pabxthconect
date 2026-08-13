@@ -79,11 +79,14 @@ class AdminSupervisionController extends Controller
         $supervisorUserId = (int) $request->user()->id;
         $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses, $supervisorUserId) {
             $agentCalls = $calls->get($extension->id, collect());
-            $call = $agentCalls->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->sortByDesc('id')->first();
+            $call = $agentCalls->whereNull('ended_at')->filter(function (CallRecord $item) {
+                return $item->status === 'answered'
+                    || (in_array($item->status, ['dialing', 'ringing'], true) && $item->started_at?->gte(now()->subSeconds(40)));
+            })->sortByDesc('id')->first();
             $presence = $presenceAvailable ? $extension->presence : null;
             $online = $presence?->heartbeat_at?->gte($staleBefore) ?? false;
             $state = $call ? ($call->status === 'answered' ? 'talking' : 'calling') : ($online ? ($presence->state === 'paused' ? 'paused' : 'available') : 'offline');
-            $since = $call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at;
+            $since = $state === 'offline' ? null : ($call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at);
 
             return [
                 'id' => $extension->id,
@@ -101,7 +104,7 @@ class AdminSupervisionController extends Controller
                 'calls_today' => $agentCalls->count(),
                 'answered_today' => $agentCalls->whereNotNull('answered_at')->count(),
                 'average_seconds' => (int) round($agentCalls->where('duration_seconds', '>', 0)->avg('duration_seconds') ?? 0),
-                'talk_seconds' => (int) $agentCalls->sum(fn (CallRecord $item) => $item->answered_at ? $item->answered_at->diffInSeconds($item->ended_at ?? now()) : 0),
+                'talk_seconds' => (int) $agentCalls->sum(fn (CallRecord $item) => $item->answered_at ? max(0, (int) floor($item->answered_at->diffInSeconds($item->ended_at ?? now()))) : 0),
                 'logged_seconds' => (int) $sessions->get($extension->id, collect())->sum(fn (OperatorSession $item) => $this->sessionSeconds($item, $dayStart, $dayEnd, $online)),
                 'pause_seconds' => (int) $pauses->get($extension->id, collect())->sum(fn (OperatorPauseSession $item) => $this->intervalSeconds($item->started_at, $item->ended_at ?? ($online ? now() : ($presence?->heartbeat_at ?? now())), $dayStart, $dayEnd)),
                 'can_force_logout' => $online && (int) $extension->user_id !== $supervisorUserId,
@@ -144,13 +147,12 @@ class AdminSupervisionController extends Controller
         ])->sortByDesc('seconds')->values();
 
         $timeline = $logs->map(fn (OperatorActivityLog $log) => ['action' => $log->action, 'description' => $log->description, 'occurred_at' => $log->occurred_at?->toIso8601String(), 'metadata' => $log->metadata])
-            ->concat($calls->map(function (CallRecord $call) {
-                $result = match ($call->status) {
-                    'completed', 'answered' => 'atendida', 'ringing' => 'tocando', 'dialing' => 'iniciada', default => 'não completada',
-                };
-
-                return ['action' => 'pbx_call_'.$call->status, 'description' => "Ligação para {$call->to_number}: {$result}.", 'occurred_at' => $call->started_at?->toIso8601String(), 'metadata' => ['call_record_id' => $call->id, 'duration_seconds' => $call->duration_seconds]];
-            }))->sortByDesc('occurred_at')->take(200)->values();
+            ->concat($calls->map(fn (CallRecord $call) => [
+                'action' => 'pbx_call_'.$call->status,
+                'description' => "Ligação para {$call->to_number}: {$call->resultLabel()}.",
+                'occurred_at' => $call->started_at?->toIso8601String(),
+                'metadata' => ['call_record_id' => $call->id, 'duration_seconds' => $call->effectiveDurationSeconds()],
+            ]))->sortByDesc('occurred_at')->take(200)->values();
 
         return response()->json([
             'operator' => ['id' => $extension->id, 'number' => (string) $extension->number, 'name' => $extension->user?->name, 'email' => $extension->user?->email],
@@ -184,7 +186,12 @@ class AdminSupervisionController extends Controller
             // supervisao cuja chamada ativa ja esta registrada no banco.
             report($exception);
         }
-        $call = CallRecord::query()->where('extension_id', $extension->id)->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->whereIn('status', ['answered', 'ringing', 'dialing'])->latest('id')->first();
+        $call = CallRecord::query()->where('extension_id', $extension->id)->whereNull('ended_at')
+            ->where(function ($query) {
+                $query->where('status', 'answered')->orWhere(function ($attempt) {
+                    $attempt->whereIn('status', ['ringing', 'dialing'])->where('started_at', '>=', now()->subSeconds(40));
+                });
+            })->latest('id')->first();
         abort_unless($call, 422, 'Este agente não possui uma chamada ativa.');
 
         $session = isset($data['supervision_session_id'])

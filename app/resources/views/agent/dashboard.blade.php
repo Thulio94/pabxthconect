@@ -124,7 +124,7 @@
                 <label>Resultado
                     <select name="result">
                         <option value="">Todos</option>
-                        @foreach (['completed' => 'Finalizada', 'failed' => 'Não completada', 'rejected' => 'Recusada', 'cancelled' => 'Cancelada', 'answered' => 'Em andamento', 'ringing' => 'Tocando', 'dialing' => 'Chamando'] as $value => $label)
+                        @foreach (['completed'=>'Atendida','no_answer'=>'Não atendida','busy'=>'Ocupado','voicemail'=>'Caixa de mensagens','invalid_number'=>'Número não existe','rejected'=>'Recusada','cancelled'=>'Cancelada','unavailable'=>'Indisponível','failed'=>'Não completada','answered'=>'Em atendimento','ringing'=>'Tocando','dialing'=>'Chamando'] as $value => $label)
                             <option value="{{ $value }}" @selected($filters['result'] === $value)>{{ $label }}</option>
                         @endforeach
                     </select>
@@ -145,10 +145,11 @@
                                 'answered_at' => $call->answered_at?->toIso8601String(),
                                 'ended_at' => $call->ended_at?->toIso8601String(),
                                 'duration_seconds' => $call->duration_seconds,
-                                'has_recording' => $call->recording?->available_at !== null,
-                                'recording_url' => $call->recording?->available_at ? route('phone.call-records.recording', $call) : null,
+                                'result_label' => $call->resultLabel(),
+                                'has_recording' => $call->recording?->isPlayable() ?? false,
+                                'recording_url' => $call->recording?->isPlayable() ? route('phone.call-records.recording', $call) : null,
                             ];
-                            $statusLabel = ['completed' => 'Finalizada', 'failed' => 'Não completada', 'rejected' => 'Recusada', 'cancelled' => 'Cancelada', 'answered' => 'Em andamento', 'ringing' => 'Tocando', 'dialing' => 'Chamando'][$call->status] ?? 'Iniciada';
+                            $statusLabel = $call->resultLabel();
                         @endphp
                         <tr class="history-row" data-call-id="{{ $call->id }}" data-call="{{ json_encode($callData) }}">
                             <td><button type="button" class="history-open">{{ $call->to_number ?: 'Não identificado' }}</button></td>
@@ -156,7 +157,7 @@
                             <td>{{ $call->started_at?->copy()->timezone(config('app.display_timezone'))->format('d/m/Y H:i:s') }}</td>
                             <td>{{ $statusLabel }}</td>
                             <td><code>{{ gmdate('H:i:s', $call->duration_seconds) }}</code></td>
-                            <td><button type="button" class="recording-cell history-open" aria-label="{{ $call->recording?->available_at ? 'Ouvir gravação' : 'Ver detalhes' }}">{{ $call->recording?->available_at ? '▶ Ouvir' : '—' }}</button></td>
+                            <td><button type="button" class="recording-cell history-open" aria-label="{{ $call->recording?->isPlayable() ? 'Ouvir gravação' : 'Ver detalhes' }}">{{ $call->recording?->isPlayable() ? '▶ Ouvir' : '—' }}</button></td>
                         </tr>
                     @empty
                         <tr class="history-empty"><td colspan="6">{{ $historyInfiniteEnabled ? 'Nenhuma chamada encontrada para estes filtros.' : 'Nenhuma chamada registrada hoje.' }}</td></tr>

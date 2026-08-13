@@ -26,6 +26,6 @@ docker compose exec -T app php artisan pbx:provision
 docker compose exec -T asterisk asterisk -rx "dialplan show tenant-ID"
 ```
 
-No dialplan, confirme visualmente `Dial(PJSIP/TECH${TH_DEST}@trunk-ID,60,g)`. Depois do deploy, confirme os oito serviços, `/up`, registro WebRTC, uma chamada autorizada e a gravação correspondente.
+No dialplan, confirme visualmente `Dial(PJSIP/TECH${TH_DEST}@trunk-ID,40,g)`. Depois do deploy, confirme os oito serviços, `/up`, registro WebRTC, uma chamada autorizada e a gravação correspondente.
 
 Se qualquer etapa falhar, não publicar.

@@ -29,7 +29,7 @@ $checks = [ordered]@{
     'Navegador produz E.164 brasileiro' = $browser.Contains('return [`55${national}`]')
     'PBX mantém destino sanitizado no servidor' = $generator.Contains('Set(TH_DEST=\${FILTER(0-9,\${EXTEN})})')
     'PBX acrescenta 55 para telefone nacional' = $generator.Contains('Set(TH_DEST=55\${TH_DEST})')
-    'Dial acrescenta TECH da rota' = $generator.Contains('Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},60,g)')
+    'Dial acrescenta TECH da rota' = $generator.Contains('Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},40,g)')
     'Rotas respeitam prioridade da empresa' = $generator.Contains("orderBy('tenant_sip_trunks.priority')")
     'Gravação inicia com MixMonitor' = $generator.Contains('MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)')
     'Volume de runtime é persistente' = $compose.Contains('pbx_runtime:/etc/asterisk/generated')

@@ -12,7 +12,7 @@ return [
         'timeout' => (int) env('PBX_AMI_TIMEOUT', 3),
     ],
     'call_state' => [
-        'ringing_timeout_seconds' => (int) env('PBX_RINGING_TIMEOUT_SECONDS', 90),
+        'ringing_timeout_seconds' => min(40, (int) env('PBX_RINGING_TIMEOUT_SECONDS', 40)),
         'answered_check_after_seconds' => (int) env('PBX_ANSWERED_CHECK_AFTER_SECONDS', 90),
     ],
 ];
