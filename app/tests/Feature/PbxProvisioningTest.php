@@ -26,7 +26,12 @@ class PbxProvisioningTest extends TestCase
             'name' => 'Rota TECH', 'auth_mode' => 'ip_tech', 'host' => '10.10.10.10',
             'tech_prefix' => '8033', 'is_active' => true,
         ]);
+        $fallback = SipTrunk::create([
+            'name' => 'Rota TECH reserva', 'auth_mode' => 'ip_tech', 'host' => '10.10.10.11',
+            'tech_prefix' => '9044', 'is_active' => true,
+        ]);
         $tenant->trunks()->attach($trunk, ['priority' => 1, 'is_active' => true]);
+        $tenant->trunks()->attach($fallback, ['priority' => 2, 'is_active' => true]);
 
         $first = User::factory()->create(['tenant_id' => $tenant->id]);
         $second = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin']);
@@ -50,7 +55,14 @@ class PbxProvisioningTest extends TestCase
         $dialplan = File::get($runtime.'/extensions_tenants.conf');
         $this->assertStringContainsString("[{$firstExtension->sip_username}]", $endpoints);
         $this->assertStringContainsString('identify_by=username,auth_username', $endpoints);
-        $this->assertStringContainsString('Dial(PJSIP/8033${EXTEN}@trunk-'.$trunk->id.',60,g)', $dialplan);
+        $this->assertStringContainsString('Set(TH_DEST=${FILTER(0-9,${EXTEN})})', $dialplan);
+        $this->assertStringContainsString('Set(TH_DEST=55${TH_DEST})', $dialplan);
+        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',60,g)', $dialplan);
+        $this->assertStringContainsString('Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id.',60,g)', $dialplan);
+        $this->assertLessThan(
+            strpos($dialplan, 'Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id),
+            strpos($dialplan, 'Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id),
+        );
         $this->assertStringContainsString("Outbound blocked for tenant administrator {$secondExtension->id}", $dialplan);
         $this->assertStringContainsString("exten => *81{$firstExtension->id},1,NoOp(Listen {$firstExtension->id} by {$secondExtension->id})", $dialplan);
         $this->assertStringContainsString("ChanSpy(PJSIP,qbg(extension-{$firstExtension->id}))", $dialplan);

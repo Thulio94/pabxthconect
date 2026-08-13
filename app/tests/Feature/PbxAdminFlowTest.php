@@ -39,6 +39,6 @@ class PbxAdminFlowTest extends TestCase
         ])->assertRedirect()->assertSessionHas('new_extension_credentials');
 
         $this->assertDatabaseHas('extensions', ['tenant_id' => $tenant->id, 'number' => 999, 'status' => 'active']);
-        $this->assertStringContainsString('Dial(PJSIP/8033${EXTEN}@trunk-'.$trunk->id.',60,g)', File::get(config('pbx.runtime_path').'/extensions_tenants.conf'));
+        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',60,g)', File::get(config('pbx.runtime_path').'/extensions_tenants.conf'));
     }
 }

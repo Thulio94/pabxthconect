@@ -72,17 +72,32 @@ class PbxConfigGenerator
     {
         $tenants = Tenant::query()->with(['trunks' => fn ($query) => $query->wherePivot('is_active', true)->where('sip_trunks.is_active', true)->orderBy('tenant_sip_trunks.priority'), 'extensions'])->get();
         $tenantContexts = $tenants->map(function (Tenant $tenant) {
-            $trunk = $tenant->trunks->first();
-            if (! $trunk) {
+            if ($tenant->trunks->isEmpty()) {
                 return "[tenant-{$tenant->id}]\nexten => _X.,1,NoOp(No outbound route for tenant {$tenant->id})\n same => n,Congestion(10)\n same => n,Return()\n\n";
             }
 
-            $tech = $this->value($trunk->tech_prefix ?? '');
-            $trunkName = 'trunk-'.$trunk->id;
             $recording = $tenant->record_calls
                 ? " same => n,Set(CALL_RECORDING_FILE=tenant-{$tenant->id}/\${UNIQUEID}.wav)\n same => n,MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)\n"
                 : '';
-            return "[tenant-{$tenant->id}]\nexten => _X.,1,NoOp(Outbound tenant {$tenant->id})\n{$recording} same => n,Dial(PJSIP/{$tech}\${EXTEN}@{$trunkName},60,g)\n same => n,Return()\n\n";
+            $routes = $tenant->trunks->values()->map(function (SipTrunk $trunk, int $index) {
+                $tech = $this->value($trunk->tech_prefix ?? '');
+                $trunkName = 'trunk-'.$trunk->id;
+                $next = 'route-'.($index + 1);
+                $label = $index === 0 ? '' : "({$next})";
+
+                return " same => n{$label},NoOp(Outbound route {$trunk->id} with configured TECH)\n"
+                    . " same => n,Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},60,g)\n"
+                    . " same => n,GotoIf(\$[\"\${DIALSTATUS}\"=\"ANSWER\"]?done)\n";
+            })->implode('');
+
+            // The browser is intentionally unaware of the carrier TECH. It sends
+            // a Brazilian destination and the PBX builds TECH + 55 + DDD + number.
+            return "[tenant-{$tenant->id}]\nexten => _X.,1,NoOp(Outbound tenant {$tenant->id})\n"
+                . " same => n,Set(TH_DEST=\${FILTER(0-9,\${EXTEN})})\n"
+                . " same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=10]?Set(TH_DEST=55\${TH_DEST}))\n"
+                . " same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=11]?Set(TH_DEST=55\${TH_DEST}))\n"
+                . $recording.$routes
+                . " same => n(done),Return()\n\n";
         })->implode('');
         $allExtensions = $tenants->flatMap(fn (Tenant $tenant) => $tenant->extensions);
         $extensionContexts = $allExtensions->map(function (Extension $extension) use ($allExtensions) {

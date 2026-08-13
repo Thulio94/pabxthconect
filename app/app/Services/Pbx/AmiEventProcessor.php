@@ -80,7 +80,11 @@ class AmiEventProcessor
         $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
         if (! $call) return;
         $trunk = $this->trunkFromChannel($event['DestChannel'] ?? '');
-        $call->update(['sip_trunk_id' => $trunk?->id, 'dialed_uri' => $event['DestChannel'] ?? null, 'status' => 'ringing']);
+        $call->update([
+            'sip_trunk_id' => $trunk?->id,
+            'dialed_uri' => $event['DialString'] ?? $event['DestChannel'] ?? null,
+            'status' => 'ringing',
+        ]);
     }
 
     private function bridgeEnter(array $event): void

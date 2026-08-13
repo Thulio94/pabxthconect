@@ -855,7 +855,7 @@ if (config) {
             return 'O navegador bloqueou o microfone. Libere a permissão e tente novamente.';
         }
         if (statusCode === 403) return `O servidor recusou a saída deste ramal${sipCode}. Verifique a permissão de chamadas externas.`;
-        if (statusCode === 404) return `O destino ou a rota de saída não foi encontrado${sipCode}. Verifique o formato do número.`;
+        if (statusCode === 404) return `A rota recusou o destino mesmo após o PBX aplicar TECH + 55 + DDD + número${sipCode}. Verifique a TECH e o vínculo da rota no painel administrativo.`;
         if ([408, 480, 503].includes(statusCode)) return `O destino ou a rota está indisponível no momento${sipCode}.`;
         if (statusCode === 486) return `O destino está ocupado${sipCode}.`;
         if (statusCode === 488) return `O servidor recusou a negociação de áudio WebRTC${sipCode}.`;
