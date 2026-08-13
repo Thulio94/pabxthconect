@@ -133,3 +133,5 @@ Confirmar no dialplan:
 ## Recuperação segura
 
 Não editar arquivos gerados dentro do contêiner: serão sobrescritos. Corrigir banco ou gerador, executar testes, provisionar e recarregar. Antes de qualquer operação em volumes, produzir backup verificável do PostgreSQL e de `pbx_recordings`.
+
+Para diagnóstico e operação em produção, seguir o [runbook de telefonia e gravações](PRODUCTION_RUNBOOK.md).

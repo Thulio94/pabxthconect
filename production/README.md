@@ -7,10 +7,12 @@ Esta pasta é isolada do ambiente local. O Easypanel deve usar `production/compo
 - Ubuntu novo com Easypanel instalado;
 - IPv4 público fixo;
 - DNS de `phone.seudominio.com.br` e `ws.seudominio.com.br` apontando para a VPS;
-- portas `80/tcp`, `443/tcp`, `5060/udp` e `10000-10100/udp` liberadas;
+- portas `80/tcp`, `443/tcp` e `10000-10100/udp` liberadas;
+- saída UDP 5060 da VPS para o softswitch permitida, sem publicar 5060 no Docker;
 - IP público da VPS autorizado no softswitch para as rotas TECH.
 
 Não publique PostgreSQL, Redis, PHP-FPM, AMI ou a porta 8088 diretamente.
+Não publique UDP 5060: este PBX apenas origina chamadas. Consulte o [runbook operacional](../docs/PRODUCTION_RUNBOOK.md) antes de alterar firewall, SIP, RTP ou gravações.
 
 ## 2. Criar o serviço
 
@@ -74,6 +76,8 @@ O Compose cria cinco volumes:
 - `app_storage`: storage do Laravel;
 - `pbx_runtime`: ramais, rotas e credencial AMI gerados;
 - `pbx_recordings`: gravações compartilhadas por Laravel e Asterisk.
+
+O segredo AMI permanece com permissão `0600`. Os WAVs do `MixMonitor` devem ser criados com permissão `0644`, pois o Asterisk grava como `root` e o Laravel precisa ler o mesmo volume.
 
 Não renomeie serviços ou volumes depois de iniciar a produção sem antes exportar os dados.
 
