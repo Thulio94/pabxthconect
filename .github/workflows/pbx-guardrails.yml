@@ -37,8 +37,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Test Laravel contracts
-        run: php artisan test --compact
-
       - name: Build production assets
         run: npm run build
+
+      - name: Test Laravel contracts
+        run: php artisan test --compact
