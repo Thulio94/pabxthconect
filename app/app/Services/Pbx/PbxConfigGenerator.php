@@ -114,7 +114,7 @@ class PbxConfigGenerator
             ])->implode('');
             $outbound = $extension->user?->isTenantAdmin()
                 ? "exten => _X.,1,NoOp(Outbound blocked for tenant administrator {$extension->id})\n same => n,Hangup(21)\n"
-                : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Set(__SPYGROUP=extension-{$extension->id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
+                : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Set(SPYGROUP=extension-{$extension->id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
 
             return "[extension-{$extension->id}]\n{$supervision}{$outbound}\n";
         })->implode('');

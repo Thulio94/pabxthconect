@@ -1843,13 +1843,19 @@ if (supervisionConfig) {
         spyConsoleKicker.textContent = activeSpy.mode === 'listen' ? 'MODO SPY — ESCUTA SILENCIOSA' : activeSpy.mode === 'whisper' ? 'MODO SPY — SUSSURRO PRIVADO' : 'MODO SPY — ENTRADA NA LIGAÇÃO';
         spyConsole.dataset.state = activeSession ? 'live' : activeSpy.state || 'waiting';
         spyConsoleStatus.textContent = activeSession
-            ? `${modeLabel(activeSpy.mode)} em andamento. O operador não recebe aviso na escuta silenciosa.`
+            ? activeSpy.state === 'audio-blocked'
+                ? 'O navegador bloqueou o som. Clique novamente no modo selecionado para liberar o áudio.'
+                : `${modeLabel(activeSpy.mode)} em andamento. O operador não recebe aviso na escuta silenciosa.`
             : activeSpy.state === 'error'
                 ? 'Não foi possível entrar nesta chamada. O painel continua aberto para uma nova tentativa.'
                 : 'Aguardando uma nova chamada deste agente. O acompanhamento permanece ativo até você sair.';
         setSpyModeButtons();
     };
-    const detachSpyMedia = () => { audio.pause(); audio.srcObject = null; };
+    const detachSpyMedia = () => {
+        audio.pause();
+        audio.srcObject = null;
+        audio.muted = false;
+    };
     const endSpyCall = () => {
         if (activeSession && !activeSession.isEnded?.()) activeSession.terminate();
         activeSession = null;
@@ -1861,15 +1867,53 @@ if (supervisionConfig) {
         activeSpy = null;
         renderSpyConsole(); render();
     };
+    const enforceSpyMicrophoneMode = (session) => {
+        const peer = session.__thSpyPeer || session.connection;
+        const transmit = activeSpy?.mode !== 'listen';
+        peer?.getSenders?.().forEach((sender) => {
+            if (sender.track?.kind === 'audio') sender.track.enabled = transmit;
+        });
+    };
+    const playSpyAudio = async (session) => {
+        if (activeSession !== session || !session.__thSpyRemoteStream?.getAudioTracks().length) return;
+        audio.autoplay = true;
+        audio.playsInline = true;
+        audio.muted = false;
+        audio.volume = 1;
+        if (audio.srcObject !== session.__thSpyRemoteStream) audio.srcObject = session.__thSpyRemoteStream;
+        try {
+            await audio.play();
+        } catch {
+            if (activeSpy) activeSpy.state = 'audio-blocked';
+            renderSpyConsole();
+            notify('O navegador bloqueou o som. Clique novamente no modo de acompanhamento para liberar o áudio.');
+        }
+    };
     const attachSpyAudio = (session, peerconnection) => {
         const peer = peerconnection || session.connection;
-        peer?.addEventListener('track', (event) => {
-            if (event.streams[0]) {
-                audio.srcObject = event.streams[0];
-                audio.play().catch(() => {});
+        if (!peer) return;
+        session.__thSpyPeer = peer;
+        session.__thSpyRemoteStream ||= new MediaStream();
+
+        const addRemoteTrack = (track) => {
+            if (!track || track.kind !== 'audio') return;
+            if (!session.__thSpyRemoteStream.getTracks().some((item) => item.id === track.id)) {
+                session.__thSpyRemoteStream.addTrack(track);
             }
-        });
-        if (activeSpy?.mode === 'listen') peer?.getSenders?.().forEach((sender) => { if (sender.track?.kind === 'audio') sender.track.enabled = false; });
+            playSpyAudio(session);
+        };
+
+        if (session.__thSpyBoundPeer !== peer) {
+            session.__thSpyBoundPeer = peer;
+            peer.addEventListener('track', (event) => {
+                event.streams?.forEach((stream) => stream.getAudioTracks().forEach(addRemoteTrack));
+                addRemoteTrack(event.track);
+            });
+            peer.addEventListener('negotiationneeded', () => enforceSpyMicrophoneMode(session));
+        }
+
+        peer.getReceivers?.().forEach((receiver) => addRemoteTrack(receiver.track));
+        enforceSpyMicrophoneMode(session);
     };
     const placeSpyCall = (payload) => {
         if (!activeSpy || !ua.isRegistered() || activeSession) return;
@@ -1878,7 +1922,17 @@ if (supervisionConfig) {
         activeSpy.state = 'connecting';
         renderSpyConsole(); render();
         session.on('peerconnection', (event) => attachSpyAudio(session, event.peerconnection));
-        session.on('confirmed', () => { if (activeSession === session) { activeSpy.state = 'live'; renderSpyConsole(); render(); } });
+        attachSpyAudio(session, session.connection);
+        ['progress', 'accepted', 'confirmed'].forEach((eventName) => session.on(eventName, () => {
+            if (activeSession !== session) return;
+            attachSpyAudio(session, session.connection);
+            enforceSpyMicrophoneMode(session);
+            if (eventName === 'confirmed') {
+                activeSpy.state = 'live';
+                playSpyAudio(session);
+                renderSpyConsole(); render();
+            }
+        }));
         const stopped = (state = 'waiting') => {
             if (activeSession !== session) return;
             activeSession = null;
@@ -1896,6 +1950,12 @@ if (supervisionConfig) {
         if (!ua.isRegistered() || startingSpy) return;
         startingSpy = true;
         try {
+            if (activeSpy?.agent.id === agent.id && activeSession && activeSpy.mode === mode) {
+                attachSpyAudio(activeSession, activeSession.connection);
+                enforceSpyMicrophoneMode(activeSession);
+                await playSpyAudio(activeSession);
+                return;
+            }
             if (activeSpy && activeSpy.agent.id !== agent.id) {
                 endSpyCall();
                 await finishAudit();

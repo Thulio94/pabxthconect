@@ -70,6 +70,13 @@ Correção permanente:
 - Após gerar, executar reload pelo AMI. Se o AMI falhar, registrar claramente que a configuração ainda não entrou em vigor.
 - Asterisk deve manter uma única réplica.
 
+## Contrato de supervisão
+
+- `SPYGROUP` identifica somente o canal WebRTC do agente. Não usar `__SPYGROUP`, pois a herança leva o grupo para a perna da operadora e o `ChanSpy` pode selecionar o canal errado.
+- Escuta usa `ChanSpy(...,qbg(...))`, sussurro usa `qbwg(...)` e entrada usa `qbBg(...)`.
+- O navegador deve recuperar faixas remotas tanto no evento `track` quanto em `RTCPeerConnection.getReceivers()`, porque a faixa pode existir antes da instalação do listener.
+- Em "Só ouvir", o microfone do supervisor permanece desabilitado no `RTCRtpSender`; o Asterisk também não habilita `w` ou `B` nesse modo.
+
 ## Mudanças proibidas sem plano de migração
 
 - Colocar TECH no JavaScript ou devolvê-la em API pública.

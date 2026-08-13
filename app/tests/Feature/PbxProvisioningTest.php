@@ -70,7 +70,8 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString("ChanSpy(PJSIP,qbg(extension-{$firstExtension->id}))", $dialplan);
         $this->assertStringContainsString("ChanSpy(PJSIP,qbwg(extension-{$firstExtension->id}))", $dialplan);
         $this->assertStringContainsString("ChanSpy(PJSIP,qbBg(extension-{$firstExtension->id}))", $dialplan);
-        $this->assertStringContainsString("Set(__SPYGROUP=extension-{$firstExtension->id})", $dialplan);
+        $this->assertStringContainsString("Set(SPYGROUP=extension-{$firstExtension->id})", $dialplan);
+        $this->assertStringNotContainsString("Set(__SPYGROUP=extension-{$firstExtension->id})", $dialplan);
         $this->assertStringNotContainsString('qEg(', $dialplan);
         $this->assertStringNotContainsString($firstExtension->sip_secret, $dialplan);
     }
