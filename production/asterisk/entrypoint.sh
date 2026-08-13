@@ -27,4 +27,10 @@ printf '[%s]\nsecret = %s\nread = system,call,log,verbose,command,agent,user\nwr
 sed -e "s|__PBX_PUBLIC_IP__|$public_ip|g" -e "s|__PBX_LOCAL_NET__|$local_net|g" \
   /etc/asterisk/pjsip.conf.template > /etc/asterisk/pjsip.conf
 
+chmod 0600 /etc/asterisk/generated/manager_credentials.conf
+
+# MixMonitor writes to a volume shared with Laravel. Keep the AMI secret
+# private above, then allow the application container to read WAV files.
+umask 022
+
 exec "$@"

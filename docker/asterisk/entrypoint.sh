@@ -16,4 +16,9 @@ umask 077
 printf '[%s]\nsecret = %s\nread = system,call,log,verbose,command,agent,user\nwrite = system,call,command,originate\n' \
   "$ami_username" "$ami_secret" > /etc/asterisk/generated/manager_credentials.conf
 
+chmod 0600 /etc/asterisk/generated/manager_credentials.conf
+
+# Recordings share a Docker volume with Laravel and must be readable there.
+umask 022
+
 exec "$@"
