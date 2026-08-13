@@ -6,6 +6,7 @@ use App\Models\Recording;
 use App\Models\Tenant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use App\Services\Pbx\CallRecordMatcher;
 
 class AdminRecordingController extends Controller
 {
@@ -33,6 +34,25 @@ class AdminRecordingController extends Controller
                         $q->where(fn ($numbers) => $numbers->where('to_number', 'like', '%'.$digits.'%')->orWhere('from_number', 'like', '%'.$digits.'%'));
                     });
             })->latest('created_at')->paginate(25)->withQueryString();
+
+        $recordings->getCollection()->each(function (Recording $recording): void {
+            $call = $recording->call;
+            $duration = $call?->effectiveDurationSeconds() ?? 0;
+
+            // Recover duration from historical duplicates created before phone
+            // formats (national and E.164) were matched as the same call.
+            if ($call && $duration === 0 && $call->started_at) {
+                $duration = (int) \App\Models\CallRecord::query()
+                    ->where('extension_id', $call->extension_id)
+                    ->whereKeyNot($call->id)
+                    ->whereBetween('started_at', [$call->started_at->copy()->subMinutes(2), $call->started_at->copy()->addMinutes(2)])
+                    ->get()
+                    ->filter(fn ($candidate) => CallRecordMatcher::samePhoneNumber($candidate->to_number, $call->to_number))
+                    ->max(fn ($candidate) => $candidate->effectiveDurationSeconds());
+            }
+
+            $recording->setAttribute('display_duration_seconds', $duration);
+        });
 
         $tenants = Tenant::query()->when($request->user()->isTenantAdmin(), fn ($query) => $query->whereKey($request->user()->tenant_id))->orderBy('name')->get(['id', 'name']);
         return view('admin.recordings', ['recordings' => $recordings, 'tenants' => $tenants, 'filters' => $filters]);

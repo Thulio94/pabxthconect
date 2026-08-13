@@ -6,6 +6,7 @@ use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\Recording;
 use App\Services\OperatorActivityRecorder;
+use App\Services\Pbx\CallRecordMatcher;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -14,7 +15,7 @@ use Illuminate\Validation\Rule;
 
 class PhoneCallController extends Controller
 {
-    public function store(Request $request, OperatorActivityRecorder $activity): JsonResponse
+    public function store(Request $request, OperatorActivityRecorder $activity, CallRecordMatcher $matcher): JsonResponse
     {
         $agent = $request->session()->get('sip_agent');
         $data = $request->validate([
@@ -23,12 +24,11 @@ class PhoneCallController extends Controller
         ]);
         $extension = $this->extensionFromSession($agent);
         $number = preg_replace('/\D+/', '', (string) ($data['remote_number'] ?? ''));
-        $uniqueId = 'web-'.Str::uuid();
-
-        $call = CallRecord::create([
+        $call = $matcher->recentFor($extension, $number, 'asterisk');
+        $call ??= CallRecord::create([
             'tenant_id' => $extension->tenant_id,
             'extension_id' => $extension->id,
-            'asterisk_uniqueid' => $uniqueId,
+            'asterisk_uniqueid' => $uniqueId = 'web-'.Str::uuid(),
             'asterisk_linkedid' => $uniqueId,
             'direction' => $data['direction'] === 'incoming' ? 'inbound' : 'outbound',
             'from_number' => $data['direction'] === 'incoming' ? $number : (string) $extension->number,
@@ -40,7 +40,7 @@ class PhoneCallController extends Controller
         if ($extension->tenant->record_calls) {
             $deleteAfter = $extension->tenant->recording_retention_days
                 ? now()->addDays($extension->tenant->recording_retention_days) : null;
-            Recording::create([
+            Recording::firstOrCreate(['call_record_id' => $call->id], [
                 'call_record_id' => $call->id,
                 'storage_disk' => 'pbx_recordings',
                 'path' => "tenant-{$extension->tenant_id}/browser-{$call->id}.webm",
@@ -63,7 +63,8 @@ class PhoneCallController extends Controller
         if ($data['status'] === 'answered' && $callRecord->answered_at === null) $updates['answered_at'] = now();
         if (in_array($data['status'], ['completed', 'failed', 'rejected', 'cancelled'], true)) {
             $updates['ended_at'] = now();
-            $updates['duration_seconds'] = $data['duration_seconds'] ?? 0;
+            $measured = (int) ($data['duration_seconds'] ?? 0);
+            $updates['duration_seconds'] = max($measured, $callRecord->effectiveDurationSeconds());
         }
         $callRecord->update($updates);
 
@@ -129,7 +130,7 @@ class PhoneCallController extends Controller
             'started_at' => $call->started_at?->toIso8601String(),
             'answered_at' => $call->answered_at?->toIso8601String(),
             'ended_at' => $call->ended_at?->toIso8601String(),
-            'duration_seconds' => $call->duration_seconds,
+            'duration_seconds' => $call->effectiveDurationSeconds(),
             'has_recording' => $recording?->available_at !== null,
             'recording_url' => $recording?->available_at ? route('phone.call-records.recording', $call) : null,
         ];

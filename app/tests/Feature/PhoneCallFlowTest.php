@@ -71,6 +71,25 @@ class PhoneCallFlowTest extends TestCase
         $this->actingAs($extension->user)->withSession($session)->get('/telefone/historico/'.$callId.'/gravacao')->assertOk();
     }
 
+    public function test_browser_reuses_asterisk_call_created_first_with_e164_number(): void
+    {
+        [$tenant, $extension] = $this->extension();
+        $call = CallRecord::create([
+            'tenant_id' => $tenant->id, 'extension_id' => $extension->id,
+            'asterisk_uniqueid' => '1723480002.01', 'asterisk_linkedid' => '1723480002.01',
+            'direction' => 'outbound', 'from_number' => '999', 'to_number' => '5581996342657',
+            'status' => 'dialing', 'started_at' => now(),
+        ]);
+        $session = ['sip_agent' => $this->agentSession($tenant, $extension)];
+
+        $this->actingAs($extension->user)->withSession($session)->postJson('/telefone/chamadas', [
+            'direction' => 'outgoing', 'remote_number' => '81996342657',
+        ])->assertCreated()->assertJsonPath('id', $call->id);
+
+        $this->assertDatabaseCount('call_records', 1);
+        $this->assertDatabaseCount('recordings', 1);
+    }
+
     private function extension(string $suffix = ''): array
     {
         $tenant = Tenant::create(['name' => 'Empresa '.$suffix, 'slug' => 'empresa'.($suffix ?: '-teste'), 'status' => 'active', 'record_calls' => true]);

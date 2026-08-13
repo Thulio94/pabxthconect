@@ -10,6 +10,10 @@ use Illuminate\Support\Facades\Storage;
 
 class AmiEventProcessor
 {
+    public function __construct(private readonly CallRecordMatcher $matcher)
+    {
+    }
+
     public function process(array $event): void
     {
         match ($event['Event'] ?? '') {
@@ -34,10 +38,7 @@ class AmiEventProcessor
         if (! $call) {
             // O webphone grava imediatamente como contingÃªncia. Quando o evento
             // AMI chega, ele passa a ser o mesmo registro, sem duplicar histÃ³rico.
-            $call = CallRecord::query()->where('extension_id', $extension->id)
-                ->where('asterisk_uniqueid', 'like', 'web-%')->whereNull('ended_at')
-                ->where('to_number', $number)->where('started_at', '>=', now()->subMinutes(2))
-                ->latest('id')->first();
+            $call = $this->matcher->recentFor($extension, $number);
         }
         if ($call) {
             $call->update(['asterisk_uniqueid' => $uniqueId, 'asterisk_linkedid' => $event['Linkedid'] ?? $uniqueId, 'status' => 'dialing']);

@@ -18,6 +18,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class AdminSupervisionController extends Controller
 {
@@ -43,20 +44,29 @@ class AdminSupervisionController extends Controller
         $dayStart = today();
         $dayEnd = now();
 
-        $extensions = Extension::query()->with(['user:id,name,email', 'presence.pauseReason'])
+        $presenceAvailable = Schema::hasTable('extension_presences');
+        $metricsAvailable = Schema::hasTable('operator_sessions') && Schema::hasTable('operator_pause_sessions');
+        $relations = ['user:id,name,email'];
+        if ($presenceAvailable) $relations[] = 'presence.pauseReason';
+
+        $extensions = Extension::query()->with($relations)
             ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get();
         $extensionIds = $extensions->pluck('id');
         $callState->reconcile($extensionIds);
         $calls = CallRecord::query()->whereIn('extension_id', $extensionIds)->where('started_at', '>=', $dayStart)->where('started_at', '<', $dayStart->copy()->addDay())->get()->groupBy('extension_id');
-        $sessions = OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
-            ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))->get()->groupBy('extension_id');
-        $pauses = OperatorPauseSession::query()->whereIn('extension_id', $extensionIds)->where('started_at', '<=', $dayEnd)
-            ->where(fn ($query) => $query->whereNull('ended_at')->orWhere('ended_at', '>=', $dayStart))->get()->groupBy('extension_id');
+        $sessions = $metricsAvailable
+            ? OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
+                ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))->get()->groupBy('extension_id')
+            : collect();
+        $pauses = $metricsAvailable
+            ? OperatorPauseSession::query()->whereIn('extension_id', $extensionIds)->where('started_at', '<=', $dayEnd)
+                ->where(fn ($query) => $query->whereNull('ended_at')->orWhere('ended_at', '>=', $dayStart))->get()->groupBy('extension_id')
+            : collect();
 
-        $agents = $extensions->map(function (Extension $extension) use ($staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
+        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
                 $agentCalls = $calls->get($extension->id, collect());
                 $call = $agentCalls->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->sortByDesc('id')->first();
-                $presence = $extension->presence;
+                $presence = $presenceAvailable ? $extension->presence : null;
                 $online = $presence?->heartbeat_at?->gte($staleBefore) ?? false;
                 $state = $call ? ($call->status === 'answered' ? 'talking' : 'calling') : ($online ? ($presence->state === 'paused' ? 'paused' : 'available') : 'offline');
                 $since = $call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at;

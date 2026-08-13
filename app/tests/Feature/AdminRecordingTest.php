@@ -31,4 +31,20 @@ class AdminRecordingTest extends TestCase
         $this->actingAs($admin)->get("/administracao/gravacoes/{$recording->id}/ouvir")
             ->assertOk()->assertHeader('content-type', 'audio/wav');
     }
+
+    public function test_recordings_use_compact_numbered_pagination(): void
+    {
+        $admin = User::factory()->create(['role' => 'superadmin', 'must_change_password' => false]);
+        $tenant = Tenant::create(['name' => 'Empresa Paginada', 'slug' => 'paginada', 'status' => 'active']);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+
+        foreach (range(1, 26) as $index) {
+            $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '551199999'.str_pad((string) $index, 4, '0', STR_PAD_LEFT), 'status' => 'completed', 'started_at' => now()->subSeconds($index), 'duration_seconds' => $index]);
+            Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => "tenant-{$tenant->id}/call-{$index}.wav", 'mime_type' => 'audio/wav', 'available_at' => now()]);
+        }
+
+        $this->actingAs($admin)->get('/administracao/gravacoes')
+            ->assertOk()->assertSee('compact-pagination')->assertSee('?page=2');
+    }
 }

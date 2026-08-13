@@ -12,6 +12,7 @@ use App\Models\OperatorSession;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class AdminSupervisionTest extends TestCase
@@ -113,5 +114,20 @@ class AdminSupervisionTest extends TestCase
         $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$other->id)->assertForbidden();
         $this->actingAs($admin)->getJson('/administracao/acompanhamento/ramais/'.$foreignExtension->id.'/dia')->assertForbidden();
         $this->actingAs($admin)->get('/administracao')->assertForbidden();
+    }
+
+    public function test_agent_list_remains_available_while_optional_operational_tables_are_missing(): void
+    {
+        $tenant = Tenant::create(['name' => 'Operação resiliente', 'slug' => 'operacao-resiliente', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+
+        Schema::drop('extension_presences');
+        Schema::drop('operator_pause_sessions');
+        Schema::drop('operator_sessions');
+
+        $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
+            ->assertOk()->assertJsonPath('agents.0.state', 'offline')->assertJsonPath('agents.0.logged_seconds', 0);
     }
 }

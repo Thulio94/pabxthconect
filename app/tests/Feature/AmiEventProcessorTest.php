@@ -85,4 +85,25 @@ class AmiEventProcessorTest extends TestCase
         $this->assertSame('audio/wav', $recording->mime_type);
         $this->assertSame(strlen('audio-finalizado'), $recording->size_bytes);
     }
+    public function test_ami_matches_browser_call_when_number_changes_from_national_to_e164(): void
+    {
+        Storage::fake('pbx_recordings');
+        $tenant = Tenant::create(['name' => 'Empresa E164', 'slug' => 'empresa-e164', 'status' => 'active', 'record_calls' => true]);
+        $user = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'segredo', 'status' => 'active']);
+        $call = CallRecord::create([
+            'tenant_id' => $tenant->id, 'extension_id' => $extension->id,
+            'asterisk_uniqueid' => 'web-e164', 'asterisk_linkedid' => 'web-e164',
+            'direction' => 'outbound', 'from_number' => '999', 'to_number' => '81996342657',
+            'status' => 'dialing', 'started_at' => now(),
+        ]);
+
+        app(AmiEventProcessor::class)->process([
+            'Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000101",
+            'Uniqueid' => '1723480001.01', 'Linkedid' => '1723480001.01', 'Exten' => '5581996342657',
+        ]);
+
+        $this->assertDatabaseCount('call_records', 1);
+        $this->assertSame('1723480001.01', $call->fresh()->asterisk_uniqueid);
+    }
 }

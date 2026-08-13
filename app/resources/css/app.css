@@ -222,6 +222,12 @@
 .filter-actions .button { min-height:39px; padding:8px 13px; white-space:nowrap; }
 .recordings-registry audio { width:210px; height:34px; vertical-align:middle; }
 .pagination-wrap { margin-top:18px; }
+.compact-pagination { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:6px; }
+.compact-pagination a,.compact-pagination span { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #d5e1f0; border-radius:8px; color:#365986; background:#fff; font-size:12px; font-weight:850; line-height:1; text-decoration:none; }
+.compact-pagination a:hover { color:#fff; border-color:#3155e7; background:#3155e7; }
+.compact-pagination .active { color:#fff; border-color:#173867; background:#173867; }
+.compact-pagination .disabled { color:#a8b5c8; background:#f3f6fa; }
+.compact-pagination .page-ellipsis { border-color:transparent; background:transparent; }
 .empty-cell { height:110px; color:#7183a1; text-align:center; }
 
 @keyframes linePulse { 0%,100% { box-shadow:0 0 0 0 rgba(7,135,117,.16); } 50% { box-shadow:0 0 0 9px rgba(7,135,117,0); } }
