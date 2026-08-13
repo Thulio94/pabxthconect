@@ -23,6 +23,7 @@ services:
       APP_DEBUG: "false"
       APP_URL: ${APP_URL:?Defina APP_URL no Easypanel}
       APP_LOCALE: pt_BR
+      APP_DISPLAY_TIMEZONE: ${APP_DISPLAY_TIMEZONE:-America/Sao_Paulo}
       LOG_CHANNEL: stack
       LOG_LEVEL: ${LOG_LEVEL:-warning}
       DB_CONNECTION: pgsql

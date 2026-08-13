@@ -4,21 +4,20 @@ namespace App\Http\Controllers;
 
 use App\Models\CallRecord;
 use App\Models\Extension;
-use App\Models\ExtensionPresence;
-use App\Models\PauseReason;
 use App\Models\OperatorActivityLog;
 use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
+use App\Models\PauseReason;
 use App\Models\SupervisionSession;
 use App\Models\Tenant;
 use App\Services\Pbx\CallStateReconciler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
-use Illuminate\View\View;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
+use Illuminate\View\View;
 
 class AdminSupervisionController extends Controller
 {
@@ -40,30 +39,33 @@ class AdminSupervisionController extends Controller
     {
         $tenantId = $request->validate(['tenant_id' => ['required', Rule::exists('tenants', 'id')]])['tenant_id'];
         $this->authorizeTenant($request, (int) $tenantId);
+        [$dayStart, $dayEnd] = $this->operationDayBounds();
         $staleBefore = now()->subSeconds(45);
-        $dayStart = today();
-        $dayEnd = now();
 
-        $presenceAvailable = Schema::hasTable('extension_presences');
-        $metricsAvailable = Schema::hasTable('operator_sessions') && Schema::hasTable('operator_pause_sessions');
-        $relations = ['user:id,name,email'];
-        if ($presenceAvailable) $relations[] = 'presence.pauseReason';
+        try {
 
-        $extensions = Extension::query()->with($relations)
-            ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get();
-        $extensionIds = $extensions->pluck('id');
-        $callState->reconcile($extensionIds);
-        $calls = CallRecord::query()->whereIn('extension_id', $extensionIds)->where('started_at', '>=', $dayStart)->where('started_at', '<', $dayStart->copy()->addDay())->get()->groupBy('extension_id');
-        $sessions = $metricsAvailable
-            ? OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
-                ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))->get()->groupBy('extension_id')
-            : collect();
-        $pauses = $metricsAvailable
-            ? OperatorPauseSession::query()->whereIn('extension_id', $extensionIds)->where('started_at', '<=', $dayEnd)
-                ->where(fn ($query) => $query->whereNull('ended_at')->orWhere('ended_at', '>=', $dayStart))->get()->groupBy('extension_id')
-            : collect();
+            $presenceAvailable = Schema::hasTable('extension_presences');
+            $metricsAvailable = Schema::hasTable('operator_sessions') && Schema::hasTable('operator_pause_sessions');
+            $relations = ['user:id,name,email'];
+            if ($presenceAvailable && Schema::hasTable('pause_reasons')) {
+                $relations[] = 'presence.pauseReason';
+            }
 
-        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
+            $extensions = Extension::query()->with($relations)
+                ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get();
+            $extensionIds = $extensions->pluck('id');
+            $callState->reconcile($extensionIds);
+            $calls = CallRecord::query()->whereIn('extension_id', $extensionIds)->where('started_at', '>=', $dayStart)->where('started_at', '<', $dayStart->copy()->addDay())->get()->groupBy('extension_id');
+            $sessions = $metricsAvailable
+                ? OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
+                    ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))->get()->groupBy('extension_id')
+                : collect();
+            $pauses = $metricsAvailable
+                ? OperatorPauseSession::query()->whereIn('extension_id', $extensionIds)->where('started_at', '<=', $dayEnd)
+                    ->where(fn ($query) => $query->whereNull('ended_at')->orWhere('ended_at', '>=', $dayStart))->get()->groupBy('extension_id')
+                : collect();
+
+            $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
                 $agentCalls = $calls->get($extension->id, collect());
                 $call = $agentCalls->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->sortByDesc('id')->first();
                 $presence = $presenceAvailable ? $extension->presence : null;
@@ -93,15 +95,46 @@ class AdminSupervisionController extends Controller
                 ];
             });
 
-        return response()->json(['agents' => $agents, 'generated_at' => now()->toIso8601String()]);
+            return response()->json(['agents' => $agents, 'generated_at' => now()->toIso8601String(), 'degraded' => false]);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            // Acompanhamento é ferramenta operacional: uma falha em métricas,
+            // presença ou AMI não pode derrubar a lista inteira com HTTP 500.
+            $agents = Extension::query()->with('user:id,name,email')
+                ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get()
+                ->map(fn (Extension $extension) => [
+                    'id' => $extension->id,
+                    'number' => (string) $extension->number,
+                    'name' => $extension->user?->name ?? 'Sem usuário',
+                    'email' => $extension->user?->email,
+                    'state' => 'offline',
+                    'status_label' => 'Indisponível',
+                    'status_color' => null,
+                    'since' => null,
+                    'call' => null,
+                    'calls_today' => 0,
+                    'answered_today' => 0,
+                    'average_seconds' => 0,
+                    'talk_seconds' => 0,
+                    'logged_seconds' => 0,
+                    'pause_seconds' => 0,
+                ]);
+
+            return response()->json([
+                'agents' => $agents,
+                'generated_at' => now()->toIso8601String(),
+                'degraded' => true,
+                'warning' => 'Dados em tempo real temporariamente indisponíveis; a lista básica foi preservada.',
+            ]);
+        }
     }
 
     public function daily(Request $request, Extension $extension): JsonResponse
     {
         $this->authorizeTenant($request, $extension->tenant_id);
         $data = $request->validate(['date' => ['nullable', 'date_format:Y-m-d']]);
-        $dayStart = isset($data['date']) ? Carbon::parse($data['date'])->startOfDay() : today();
-        $dayEnd = $dayStart->isToday() ? now() : $dayStart->copy()->endOfDay();
+        [$dayStart, $dayEnd] = $this->operationDayBounds($data['date'] ?? null);
         $online = $extension->presence?->heartbeat_at?->gte(now()->subSeconds(45)) ?? false;
 
         $sessions = OperatorSession::query()->where('extension_id', $extension->id)->where('logged_in_at', '<=', $dayEnd)
@@ -123,6 +156,7 @@ class AdminSupervisionController extends Controller
                 $result = match ($call->status) {
                     'completed', 'answered' => 'atendida', 'ringing' => 'tocando', 'dialing' => 'iniciada', default => 'não completada',
                 };
+
                 return ['action' => 'pbx_call_'.$call->status, 'description' => "Ligação para {$call->to_number}: {$result}.", 'occurred_at' => $call->started_at?->toIso8601String(), 'metadata' => ['call_record_id' => $call->id, 'duration_seconds' => $call->duration_seconds]];
             }))->sortByDesc('occurred_at')->take(200)->values();
 
@@ -181,7 +215,9 @@ class AdminSupervisionController extends Controller
             'session_id' => $session->id,
             'call_id' => $call->id,
             'mode' => $data['mode'],
-            'dial_number' => '*8'.match ($data['mode']) {'listen' => '1', 'whisper' => '2', 'barge' => '3'}.$extension->id,
+            'dial_number' => '*8'.match ($data['mode']) {
+                'listen' => '1', 'whisper' => '2', 'barge' => '3'
+            }.$extension->id,
             'message' => match ($data['mode']) {
                 'listen' => 'Escuta iniciada. A ação foi registrada na auditoria.',
                 'whisper' => 'Sussurro iniciado. Somente o agente ouvirá o supervisor.',
@@ -194,6 +230,7 @@ class AdminSupervisionController extends Controller
     {
         abort_unless($supervisionSession->supervisor_user_id === $request->user()->id, 403);
         $supervisionSession->update(['status' => 'ended', 'ended_at' => now()]);
+
         return response()->json(['message' => 'Supervisão encerrada.']);
     }
 
@@ -206,6 +243,7 @@ class AdminSupervisionController extends Controller
             'max_minutes' => ['nullable', 'integer', 'between:1,480'],
         ]);
         PauseReason::create([...$data, 'is_active' => true]);
+
         return back()->with('status', 'Pausa cadastrada para a empresa.');
     }
 
@@ -218,29 +256,35 @@ class AdminSupervisionController extends Controller
             'is_active' => ['nullable', 'boolean'],
         ]);
         $pauseReason->update([...$data, 'is_active' => $request->boolean('is_active')]);
+
         return back()->with('status', 'Pausa atualizada.');
     }
 
     public function destroyPause(PauseReason $pauseReason): RedirectResponse
     {
         $pauseReason->delete();
+
         return back()->with('status', 'Pausa excluída.');
     }
 
     private function supervisorCredentials(Request $request): array
     {
         $extension = $request->user()->pbxExtension()->firstOrFail();
+
         return ['sip_user' => $extension->sip_username, 'sip_pass' => $extension->sip_secret, 'sip_host' => config('pbx.sip_domain'), 'sip_ws_uri' => config('pbx.websocket_url')];
     }
 
     private function authorizeTenant(Request $request, int $tenantId): void
     {
-        if ($request->user()->isTenantAdmin()) abort_unless((int) $request->user()->tenant_id === $tenantId, 403);
+        if ($request->user()->isTenantAdmin()) {
+            abort_unless((int) $request->user()->tenant_id === $tenantId, 403);
+        }
     }
 
     private function sessionSeconds(OperatorSession $session, $dayStart, $dayEnd, bool $online): int
     {
         $end = $session->logged_out_at ?? ($online ? now() : ($session->last_seen_at ?? $session->logged_in_at));
+
         return $this->intervalSeconds($session->logged_in_at, $end, $dayStart, $dayEnd);
     }
 
@@ -248,6 +292,19 @@ class AdminSupervisionController extends Controller
     {
         $from = $start->greaterThan($dayStart) ? $start : $dayStart;
         $to = $end->lessThan($dayEnd) ? $end : $dayEnd;
-        return $to->greaterThan($from) ? $from->diffInSeconds($to) : 0;
+
+        return $to->greaterThan($from) ? (int) floor($from->diffInSeconds($to)) : 0;
+    }
+
+    private function operationDayBounds(?string $date = null): array
+    {
+        $timezone = config('app.display_timezone', 'America/Sao_Paulo');
+        $localNow = now($timezone);
+        $localStart = $date
+            ? Carbon::createFromFormat('Y-m-d', $date, $timezone)->startOfDay()
+            : $localNow->copy()->startOfDay();
+        $localEnd = $localStart->isSameDay($localNow) ? $localNow : $localStart->copy()->endOfDay();
+
+        return [$localStart->utc(), $localEnd->utc()];
     }
 }

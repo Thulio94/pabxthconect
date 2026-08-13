@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CallRecord;
+use App\Models\Extension;
 use App\Models\SipTrunk;
 use App\Models\Tenant;
 use App\Models\User;
-use App\Models\Extension;
-use App\Services\Pbx\ExtensionAllocator;
 use App\Services\Pbx\AmiClient;
+use App\Services\Pbx\ExtensionAllocator;
 use App\Services\Pbx\PbxConfigGenerator;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,6 +25,13 @@ class SuperAdminController extends Controller
         return view('admin.index', [
             'tenants' => Tenant::query()->with(['trunks', 'extensions.user', 'pauseReasons' => fn ($query) => $query->orderBy('name')])->orderBy('name')->get(),
             'trunks' => SipTrunk::query()->withCount('tenants')->orderBy('name')->get(),
+            'latestRouteFailures' => CallRecord::query()
+                ->with(['tenant:id,name', 'extension:id,number', 'trunk:id,name,tech_prefix'])
+                ->where('status', 'failed')
+                ->where('started_at', '>=', now()->subDay())
+                ->latest('started_at')
+                ->limit(20)
+                ->get(),
         ]);
     }
 
@@ -115,6 +123,7 @@ class SuperAdminController extends Controller
             $ami->command('pjsip qualify trunk-'.$trunk->id);
         } catch (Throwable $exception) {
             report($exception);
+
             return back()->withErrors(['route_test' => 'O PBX não conseguiu enviar o teste pela rota. Revise host, porta, transporte e autorização de IP.']);
         }
 
@@ -137,11 +146,18 @@ class SuperAdminController extends Controller
             'password' => ['nullable', 'string', 'max:255', 'not_regex:/[\r\n;#]/'],
             'is_active' => ['nullable', 'boolean'],
         ]);
-        if ($data['auth_mode'] === 'ip_tech' && blank($data['tech_prefix'] ?? null)) return back()->withErrors(['tech_prefix' => 'Informe o TECH para a rota autenticada por IP.']);
-        if ($data['auth_mode'] === 'userpass' && blank($data['username'] ?? $trunk->username)) return back()->withErrors(['username' => 'Informe o usuário SIP.']);
-        if (blank($data['password'] ?? null)) unset($data['password']);
+        if ($data['auth_mode'] === 'ip_tech' && blank($data['tech_prefix'] ?? null)) {
+            return back()->withErrors(['tech_prefix' => 'Informe o TECH para a rota autenticada por IP.']);
+        }
+        if ($data['auth_mode'] === 'userpass' && blank($data['username'] ?? $trunk->username)) {
+            return back()->withErrors(['username' => 'Informe o usuário SIP.']);
+        }
+        if (blank($data['password'] ?? null)) {
+            unset($data['password']);
+        }
         $trunk->update([...$data, 'is_active' => $request->boolean('is_active')]);
         $this->provision();
+
         return back()->with('status', 'Rota SIP atualizada.');
     }
 
@@ -150,6 +166,7 @@ class SuperAdminController extends Controller
         $trunk->tenants()->detach();
         $trunk->delete();
         $this->provision();
+
         return back()->with('status', 'Rota SIP e seus vínculos foram excluídos.');
     }
 
@@ -157,6 +174,7 @@ class SuperAdminController extends Controller
     {
         $tenant->delete();
         $this->provision();
+
         return back()->with('status', 'Empresa, usuários, ramais e vínculos foram excluídos.');
     }
 
@@ -164,6 +182,7 @@ class SuperAdminController extends Controller
     {
         $tenant->trunks()->detach($trunk->id);
         $this->provision();
+
         return back()->with('status', 'Rota desvinculada da empresa.');
     }
 
@@ -190,6 +209,7 @@ class SuperAdminController extends Controller
         $extension->update($updates);
         $this->provision();
         $response = back()->with('status', 'Usuário e ramal atualizados.');
+
         return isset($updates['sip_secret']) ? $response->with('new_extension_credentials', ['name' => $extension->user?->name, 'email' => $extension->user?->email, 'extension' => $extension->number, 'password' => $updates['sip_secret']]) : $response;
     }
 
@@ -202,6 +222,7 @@ class SuperAdminController extends Controller
         $extension->delete();
         $user?->delete();
         $this->provision();
+
         return back()->with('status', 'Usuário e ramal excluídos.');
     }
 
@@ -226,6 +247,7 @@ class SuperAdminController extends Controller
             $this->provision();
         } catch (Throwable $exception) {
             report($exception);
+
             return back()->withErrors(['user' => 'Não foi possível criar o usuário e o ramal.'])->withInput();
         }
 

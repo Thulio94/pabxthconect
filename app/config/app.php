@@ -68,6 +68,13 @@ return [
     'timezone' => 'UTC',
 
     /*
+    | Keep persistence and integrations in UTC, but render dates for the
+    | operation in its local timezone. Changing the application timezone
+    | itself would reinterpret existing PBX timestamps.
+    */
+    'display_timezone' => env('APP_DISPLAY_TIMEZONE', 'America/Sao_Paulo'),
+
+    /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------

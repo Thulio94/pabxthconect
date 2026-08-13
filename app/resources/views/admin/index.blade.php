@@ -83,6 +83,17 @@
             </div>
         </section>
 
+        <section class="registry pbx-registry">
+            <div class="section-title"><div><p class="eyebrow">DIAGNÓSTICO DE DISCAGEM</p><h2>Falhas das últimas 24 horas</h2><p class="muted">Confirme aqui o destino efetivamente montado pelo Asterisk. O padrão correto é TECH + 55 + DDD + número.</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Hora</th><th>Empresa</th><th>Ramal</th><th>Rota</th><th>Destino enviado</th><th>Retorno</th></tr></thead><tbody>
+                @forelse($latestRouteFailures as $call)
+                    <tr><td>{{ $call->started_at?->copy()->timezone(config('app.display_timezone'))->format('d/m H:i:s') }}</td><td>{{ $call->tenant?->name ?? '—' }}</td><td>{{ $call->extension?->number ?? '—' }}</td><td>{{ $call->trunk?->name ?? 'Não identificada' }}</td><td><code>{{ $call->dialed_uri ?: 'Aguardando evento AMI' }}</code></td><td>{{ $call->hangup_cause ?: 'Sem detalhe' }}</td></tr>
+                @empty
+                    <tr><td colspan="6" class="empty-cell">Nenhuma falha registrada nas últimas 24 horas.</td></tr>
+                @endforelse
+            </tbody></table></div>
+        </section>
+
         <section class="registry tenant-list">
             <div class="section-title"><div><p class="eyebrow">EMPRESAS E RAMAIS</p><h2>Configuração por empresa</h2></div></div>
             @forelse($tenants as $tenant)

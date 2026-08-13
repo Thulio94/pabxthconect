@@ -2,38 +2,50 @@
 
 namespace App\Services\Pbx;
 
+use App\Models\Extension;
 use RuntimeException;
 
 class AmiClient
 {
     /**
      * @return array<int>|null IDs de ramais com um canal PJSIP ativo. Retorna
-     * null quando o AMI nÃ£o puder ser consultado para evitar falso encerramento.
+     *                         null quando o AMI nÃ£o puder ser consultado para evitar falso encerramento.
      */
     public function activeExtensionIds(): ?array
     {
         $config = config('pbx.ami');
-        if (! $config['username'] || ! $config['secret']) return null;
+        if (! $config['username'] || ! $config['secret']) {
+            return null;
+        }
 
         $socket = null;
         try {
             $socket = @fsockopen($config['host'], $config['port'], $errno, $error, $config['timeout']);
-            if (! $socket) return null;
+            if (! $socket) {
+                return null;
+            }
             stream_set_timeout($socket, $config['timeout']);
             $this->send($socket, ['Action' => 'Login', 'Username' => $config['username'], 'Secret' => $config['secret'], 'Events' => 'off']);
-            if (! str_contains($this->readResponse($socket), 'Response: Success')) return null;
+            if (! str_contains($this->readResponse($socket), 'Response: Success')) {
+                return null;
+            }
 
             $this->send($socket, ['Action' => 'CoreShowChannels']);
-            $extensions = [];
+            $sipUsernames = [];
             while (! feof($socket)) {
                 $block = $this->readHeaders($socket);
-                if (($block['Event'] ?? null) === 'CoreShowChannelsComplete') break;
-                if (($block['Event'] ?? null) !== 'CoreShowChannel') continue;
-                if (preg_match('/PJSIP\\/t\\d+-e(\\d+)-/', $block['Channel'] ?? '', $matches)) {
-                    $extensions[] = (int) $matches[1];
+                if (($block['Event'] ?? null) === 'CoreShowChannelsComplete') {
+                    break;
+                }
+                if (($block['Event'] ?? null) !== 'CoreShowChannel') {
+                    continue;
+                }
+                if (preg_match('/PJSIP\\/(t\\d+-e\\d+)-/', $block['Channel'] ?? '', $matches)) {
+                    $sipUsernames[] = $matches[1];
                 }
             }
-            return array_values(array_unique($extensions));
+
+            return $this->extensionIdsForSipUsernames($sipUsernames);
         } catch (\Throwable) {
             return null;
         } finally {
@@ -42,6 +54,16 @@ class AmiClient
                 fclose($socket);
             }
         }
+    }
+
+    /** @return array<int> */
+    public function extensionIdsForSipUsernames(array $sipUsernames): array
+    {
+        return Extension::query()
+            ->whereIn('sip_username', array_values(array_unique($sipUsernames)))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 
     public function command(string $command): void
@@ -100,10 +122,15 @@ class AmiClient
         $headers = [];
         while (! feof($socket)) {
             $line = fgets($socket);
-            if ($line === false || trim($line) === '') break;
+            if ($line === false || trim($line) === '') {
+                break;
+            }
             [$key, $value] = array_pad(explode(':', trim($line), 2), 2, null);
-            if ($key && $value !== null) $headers[$key] = ltrim($value);
+            if ($key && $value !== null) {
+                $headers[$key] = ltrim($value);
+            }
         }
+
         return $headers;
     }
 

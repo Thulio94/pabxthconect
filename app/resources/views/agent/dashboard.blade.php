@@ -153,7 +153,7 @@
                         <tr class="history-row" data-call-id="{{ $call->id }}" data-call="{{ json_encode($callData) }}">
                             <td><button type="button" class="history-open">{{ $call->to_number ?: 'Não identificado' }}</button></td>
                             <td>{{ $call->direction === 'incoming' ? 'Recebida' : 'Realizada' }}</td>
-                            <td>{{ $call->started_at?->format('d/m/Y H:i:s') }}</td>
+                            <td>{{ $call->started_at?->copy()->timezone(config('app.display_timezone'))->format('d/m/Y H:i:s') }}</td>
                             <td>{{ $statusLabel }}</td>
                             <td><code>{{ gmdate('H:i:s', $call->duration_seconds) }}</code></td>
                             <td><button type="button" class="recording-cell history-open" aria-label="{{ $call->recording?->available_at ? 'Ouvir gravação' : 'Ver detalhes' }}">{{ $call->recording?->available_at ? '▶ Ouvir' : '—' }}</button></td>

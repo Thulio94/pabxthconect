@@ -855,7 +855,7 @@ if (config) {
             return 'O navegador bloqueou o microfone. Libere a permissão e tente novamente.';
         }
         if (statusCode === 403) return `O servidor recusou a saída deste ramal${sipCode}. Verifique a permissão de chamadas externas.`;
-        if (statusCode === 404) return `A rota recusou o destino mesmo após o PBX aplicar TECH + 55 + DDD + número${sipCode}. Verifique a TECH e o vínculo da rota no painel administrativo.`;
+        if (statusCode === 404) return `O softswitch não encontrou o destino enviado pela rota${sipCode}. O administrador pode conferir o destino efetivo em Diagnóstico de discagem.`;
         if ([408, 480, 503].includes(statusCode)) return `O destino ou a rota está indisponível no momento${sipCode}.`;
         if (statusCode === 486) return `O destino está ocupado${sipCode}.`;
         if (statusCode === 488) return `O servidor recusou a negociação de áudio WebRTC${sipCode}.`;
@@ -1592,7 +1592,9 @@ if (supervisionConfig) {
     const openOperatorDay = (agent) => { selectedOperator = agent; dayDrawer.hidden = false; dayBackdrop.hidden = false; loadOperatorDay(); };
     const loadAgents = async () => {
         try {
-            agents = (await request(`${supervisionConfig.agentsUrl}?tenant_id=${encodeURIComponent(tenantSelect.value)}`)).agents;
+            const payload = await request(`${supervisionConfig.agentsUrl}?tenant_id=${encodeURIComponent(tenantSelect.value)}`);
+            agents = payload.agents;
+            if (payload.degraded && payload.warning) notify(payload.warning);
             const currentTarget = activeSpy && agents.find((agent) => agent.id === activeSpy.agent.id);
             if (currentTarget && activeSpy) activeSpy.agent = currentTarget;
             if (currentTarget?.state === 'talking' && currentTarget.call?.id && activeSpy && !activeSession && !startingSpy && currentTarget.call.id !== activeSpy.callId && ua.isRegistered()) {

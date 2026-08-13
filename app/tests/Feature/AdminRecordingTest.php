@@ -47,4 +47,17 @@ class AdminRecordingTest extends TestCase
         $this->actingAs($admin)->get('/administracao/gravacoes')
             ->assertOk()->assertSee('compact-pagination')->assertSee('?page=2');
     }
+
+    public function test_recording_time_is_rendered_in_the_operation_timezone(): void
+    {
+        $admin = User::factory()->create(['role' => 'superadmin', 'must_change_password' => false]);
+        $tenant = Tenant::create(['name' => 'Empresa Horário', 'slug' => 'empresa-horario', 'status' => 'active']);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '5511999990001', 'status' => 'completed', 'started_at' => '2026-08-13 16:33:00']);
+        Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/time.wav', 'mime_type' => 'audio/wav', 'available_at' => now()]);
+
+        $this->actingAs($admin)->get('/administracao/gravacoes')
+            ->assertOk()->assertSee('13/08/2026 13:33');
+    }
 }
