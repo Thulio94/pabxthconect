@@ -36,12 +36,14 @@ class OperatorActivityRecorder
         if ($operatorSessionId) {
             OperatorSession::query()->whereKey($operatorSessionId)->where('extension_id', $extension->id)
                 ->whereNull('logged_out_at')->update(['last_seen_at' => now(), 'updated_at' => now()]);
+
             return;
         }
 
         $session = OperatorSession::query()->where('extension_id', $extension->id)->whereNull('logged_out_at')->latest('id')->first();
         if ($session) {
             $session->update(['last_seen_at' => now()]);
+
             return;
         }
 
@@ -59,10 +61,32 @@ class OperatorActivityRecorder
     {
         $now = now();
         $query = OperatorSession::query()->where('extension_id', $extension->id)->whereNull('logged_out_at');
-        if ($operatorSessionId) $query->whereKey($operatorSessionId);
+        if ($operatorSessionId) {
+            $query->whereKey($operatorSessionId);
+        }
         $query->update(['last_seen_at' => $now, 'logged_out_at' => $now, 'updated_at' => $now]);
         $this->closePause($extension, $user, $now);
         $this->log($extension, $user, 'logout', 'Saiu da plataforma.', occurredAt: $now);
+    }
+
+    public function forceLogout(Extension $extension, User $user, User $administrator): void
+    {
+        $now = now();
+        OperatorSession::query()->where('extension_id', $extension->id)->whereNull('logged_out_at')
+            ->update(['last_seen_at' => $now, 'logged_out_at' => $now, 'updated_at' => $now]);
+        $this->closePause($extension, $user, $now, false);
+        $extension->presence()->updateOrCreate(
+            ['extension_id' => $extension->id],
+            ['pause_reason_id' => null, 'state' => 'offline', 'state_since' => $now, 'heartbeat_at' => $now->copy()->subMinutes(5)]
+        );
+        $this->log(
+            $extension,
+            $user,
+            'forced_logout',
+            "Sessão encerrada pelo administrador {$administrator->name}.",
+            ['administrator_user_id' => $administrator->id],
+            $now
+        );
     }
 
     public function startPause(Extension $extension, User $user, PauseReason $pause): void
@@ -84,9 +108,13 @@ class OperatorActivityRecorder
     {
         $at ??= now();
         $pause = OperatorPauseSession::query()->where('extension_id', $extension->id)->whereNull('ended_at')->latest('id')->first();
-        if (! $pause) return;
+        if (! $pause) {
+            return;
+        }
         $pause->update(['ended_at' => $at]);
-        if ($writeLog) $this->log($extension, $user, 'pause_ended', "Encerrou a pausa {$pause->pause_name}.", ['pause_session_id' => $pause->id], $at);
+        if ($writeLog) {
+            $this->log($extension, $user, 'pause_ended', "Encerrou a pausa {$pause->pause_name}.", ['pause_session_id' => $pause->id], $at);
+        }
     }
 
     public function log(Extension $extension, User $user, string $action, string $description, array $metadata = [], $occurredAt = null): void

@@ -52,6 +52,7 @@ Route::prefix('administracao')->group(function () {
         Route::get('/acompanhamento', [AdminSupervisionController::class, 'index'])->name('admin.supervision.index');
         Route::get('/acompanhamento/agentes', [AdminSupervisionController::class, 'agents'])->name('admin.supervision.agents');
         Route::get('/acompanhamento/ramais/{extension}/dia', [AdminSupervisionController::class, 'daily'])->name('admin.supervision.daily');
+        Route::post('/acompanhamento/ramais/{extension}/deslogar', [AdminSupervisionController::class, 'forceLogout'])->name('admin.supervision.logout');
         Route::post('/acompanhamento/ramais/{extension}', [AdminSupervisionController::class, 'supervise'])->name('admin.supervision.start');
         Route::patch('/acompanhamento/sessoes/{supervisionSession}', [AdminSupervisionController::class, 'finish'])->name('admin.supervision.finish');
     });

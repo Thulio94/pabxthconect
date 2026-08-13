@@ -221,6 +221,7 @@ window.__SIP_CONFIG__ = {{ Illuminate\Support\Js::from([
     'appointmentsUrl' => route('phone.appointments.index'),
     'presenceUrl' => route('phone.presence.heartbeat'),
     'pauseUrl' => route('phone.presence.pause'),
+    'sessionEndedUrl' => route('phone.login'),
 ]) }};
 </script>
 @endsection

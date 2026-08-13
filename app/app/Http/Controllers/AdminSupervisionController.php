@@ -10,6 +10,7 @@ use App\Models\OperatorSession;
 use App\Models\PauseReason;
 use App\Models\SupervisionSession;
 use App\Models\Tenant;
+use App\Services\OperatorActivityRecorder;
 use App\Services\Pbx\CallStateReconciler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -75,7 +76,8 @@ class AdminSupervisionController extends Controller
                     ->get()->groupBy('extension_id');
             }) : collect();
 
-        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
+        $supervisorUserId = (int) $request->user()->id;
+        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses, $supervisorUserId) {
             $agentCalls = $calls->get($extension->id, collect());
             $call = $agentCalls->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->sortByDesc('id')->first();
             $presence = $presenceAvailable ? $extension->presence : null;
@@ -102,6 +104,7 @@ class AdminSupervisionController extends Controller
                 'talk_seconds' => (int) $agentCalls->sum(fn (CallRecord $item) => $item->answered_at ? $item->answered_at->diffInSeconds($item->ended_at ?? now()) : 0),
                 'logged_seconds' => (int) $sessions->get($extension->id, collect())->sum(fn (OperatorSession $item) => $this->sessionSeconds($item, $dayStart, $dayEnd, $online)),
                 'pause_seconds' => (int) $pauses->get($extension->id, collect())->sum(fn (OperatorPauseSession $item) => $this->intervalSeconds($item->started_at, $item->ended_at ?? ($online ? now() : ($presence?->heartbeat_at ?? now())), $dayStart, $dayEnd)),
+                'can_force_logout' => $online && (int) $extension->user_id !== $supervisorUserId,
             ];
         });
 
@@ -174,7 +177,13 @@ class AdminSupervisionController extends Controller
             'supervision_session_id' => ['nullable', 'integer', Rule::exists('supervision_sessions', 'id')],
         ]);
         abort_unless($extension->status === 'active', 422, 'O ramal não está ativo.');
-        $callState->reconcile(collect([$extension->id]));
+        try {
+            $callState->reconcile(collect([$extension->id]));
+        } catch (\Throwable $exception) {
+            // A indisponibilidade momentanea do AMI nao pode impedir uma
+            // supervisao cuja chamada ativa ja esta registrada no banco.
+            report($exception);
+        }
         $call = CallRecord::query()->where('extension_id', $extension->id)->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->whereIn('status', ['answered', 'ringing', 'dialing'])->latest('id')->first();
         abort_unless($call, 422, 'Este agente não possui uma chamada ativa.');
 
@@ -212,6 +221,29 @@ class AdminSupervisionController extends Controller
                 'whisper' => 'Sussurro iniciado. Somente o agente ouvirá o supervisor.',
                 'barge' => 'Conferência iniciada. Todos os participantes ouvirão o supervisor.',
             },
+        ]);
+    }
+
+    public function forceLogout(Request $request, Extension $extension, OperatorActivityRecorder $activity): JsonResponse
+    {
+        $this->authorizeTenant($request, $extension->tenant_id);
+        abort_unless($extension->status === 'active', 422, 'O ramal não está ativo.');
+        abort_if((int) $extension->user_id === (int) $request->user()->id, 422, 'Use a opção Sair para encerrar a sua própria sessão.');
+
+        $user = $extension->user()->firstOrFail();
+        $sessions = OperatorSession::query()
+            ->where('extension_id', $extension->id)
+            ->whereNull('logged_out_at')
+            ->get();
+
+        foreach ($sessions->pluck('session_key')->filter()->unique() as $sessionKey) {
+            $request->session()->getHandler()->destroy((string) $sessionKey);
+        }
+
+        $activity->forceLogout($extension, $user, $request->user());
+
+        return response()->json([
+            'message' => "A sessão de {$user->name} foi encerrada. O telefone será desconectado automaticamente.",
         ]);
     }
 

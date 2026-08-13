@@ -383,7 +383,10 @@ if (config) {
         const response = await fetch(url, { ...options, headers });
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(error.message || `Falha HTTP ${response.status}`);
+            const failure = new Error(error.message || `Falha HTTP ${response.status}`);
+            failure.status = response.status;
+            failure.payload = error;
+            throw failure;
         }
         return response.status === 204 ? {} : response.json();
     };
@@ -1575,7 +1578,12 @@ if (config) {
         } else if (presence.state === 'available' && ua.isRegistered() && !currentSession) {
             setLineState('Registrado', 'Ramal pronto para fazer e receber chamadas.', 'available', presence.state_since);
         }
-    }).catch(() => {});
+    }).catch((error) => {
+        if (error.status === 401 || error.payload?.session_ended) {
+            ua.stop();
+            window.location.assign(config.sessionEndedUrl);
+        }
+    });
     pauseButton?.addEventListener('click', async () => {
         pauseButton.disabled = true;
         try {
@@ -1690,8 +1698,22 @@ if (supervisionConfig) {
             const actionCell = node('td'); const actions = node('div', 'supervision-actions');
             const details = node('button', 'supervision-action details', 'Ver dia'); details.type = 'button'; details.addEventListener('click', () => openOperatorDay(agent)); actions.append(details);
             [['listen','Ouvir'],['whisper','Sussurrar'],['barge','Entrar']].forEach(([mode,label]) => { const button = node('button', `supervision-action ${mode}`, label); button.type = 'button'; button.disabled = agent.state !== 'talking' || !ua.isRegistered() || startingSpy; button.addEventListener('click', () => startSupervision(agent, mode)); actions.append(button); });
+            const logout = node('button', 'supervision-action force-logout', 'Deslogar'); logout.type = 'button'; logout.disabled = !agent.can_force_logout; logout.addEventListener('click', () => forceLogoutAgent(agent, logout)); actions.append(logout);
             actionCell.append(actions); row.append(identityCell, statusCell, loggedCell, callsCell, talkCell, pauseCell, actionCell); tableBody.append(row);
         });
+    };
+
+    const forceLogoutAgent = async (agent, button) => {
+        if (!window.confirm(`Deslogar ${agent.name} do telefone agora? A ação será registrada na auditoria.`)) return;
+        button.disabled = true;
+        try {
+            const payload = await request(`${supervisionConfig.logoutUrl}/${agent.id}/deslogar`, { method: 'POST' });
+            notify(payload.message);
+            await loadAgents();
+        } catch (error) {
+            notify(error.message);
+            button.disabled = false;
+        }
     };
 
     const closeOperatorDay = () => { dayDrawer.hidden = true; dayBackdrop.hidden = true; selectedOperator = null; };

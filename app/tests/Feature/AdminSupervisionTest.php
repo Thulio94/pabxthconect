@@ -5,10 +5,11 @@ namespace Tests\Feature;
 use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\ExtensionPresence;
-use App\Models\PauseReason;
 use App\Models\OperatorActivityLog;
 use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
+use App\Models\PauseReason;
+use App\Models\SupervisionSession;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Pbx\CallStateReconciler;
@@ -36,7 +37,7 @@ class AdminSupervisionTest extends TestCase
             ->assertOk()->assertJsonPath('dial_number', '*82'.$extension->id);
         $this->assertDatabaseHas('supervision_sessions', ['supervisor_user_id' => $admin->id, 'target_extension_id' => $extension->id, 'call_record_id' => $call->id, 'mode' => 'whisper']);
 
-        $sessionId = \App\Models\SupervisionSession::firstOrFail()->id;
+        $sessionId = SupervisionSession::firstOrFail()->id;
         $replacement = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81888888888', 'status' => 'answered', 'started_at' => now(), 'answered_at' => now()]);
         $this->actingAs($admin)->postJson('/administracao/acompanhamento/ramais/'.$extension->id, ['mode' => 'listen', 'supervision_session_id' => $sessionId])
             ->assertOk()->assertJsonPath('session_id', $sessionId)->assertJsonPath('call_id', $replacement->id);
@@ -149,5 +150,63 @@ class AdminSupervisionTest extends TestCase
             ->assertOk()
             ->assertJsonPath('degraded', false)
             ->assertJsonPath('agents.0.state', 'available');
+    }
+
+    public function test_temporary_reconciliation_failure_does_not_block_supervision(): void
+    {
+        $tenant = Tenant::create(['name' => 'Operacao supervisionada', 'slug' => 'operacao-supervisionada', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81999999999', 'status' => 'answered', 'started_at' => now()->subMinute(), 'answered_at' => now()->subSeconds(50)]);
+
+        $this->mock(CallStateReconciler::class)
+            ->shouldReceive('reconcile')
+            ->once()
+            ->andThrow(new \RuntimeException('AMI temporariamente indisponivel'));
+
+        $this->actingAs($admin)
+            ->postJson('/administracao/acompanhamento/ramais/'.$extension->id, ['mode' => 'listen'])
+            ->assertOk()
+            ->assertJsonPath('call_id', $call->id)
+            ->assertJsonPath('dial_number', '*81'.$extension->id);
+    }
+
+    public function test_administrator_can_force_logout_agent_with_audited_tenant_scoped_action(): void
+    {
+        $tenant = Tenant::create(['name' => 'Operacao A', 'slug' => 'operacao-logout', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id, 'name' => 'Agente Remoto']);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
+        OperatorSession::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'agent-session-key', 'logged_in_at' => now()->subHour(), 'last_seen_at' => now()]);
+        app('session')->driver()->getHandler()->write('agent-session-key', 'remote-session');
+
+        $this->actingAs($admin)
+            ->postJson('/administracao/acompanhamento/ramais/'.$extension->id.'/deslogar')
+            ->assertOk()
+            ->assertJsonPath('message', 'A sessão de Agente Remoto foi encerrada. O telefone será desconectado automaticamente.');
+
+        $this->assertDatabaseHas('operator_sessions', ['extension_id' => $extension->id]);
+        $this->assertNotNull(OperatorSession::firstOrFail()->logged_out_at);
+        $this->assertDatabaseHas('extension_presences', ['extension_id' => $extension->id, 'state' => 'offline']);
+        $this->assertDatabaseHas('operator_activity_logs', [
+            'extension_id' => $extension->id,
+            'action' => 'forced_logout',
+        ]);
+        $this->assertSame('', app('session')->driver()->getHandler()->read('agent-session-key'));
+    }
+
+    public function test_company_administrator_cannot_force_logout_agent_from_another_company(): void
+    {
+        $tenant = Tenant::create(['name' => 'Operacao A', 'slug' => 'operacao-logout-a', 'status' => 'active']);
+        $other = Tenant::create(['name' => 'Operacao B', 'slug' => 'operacao-logout-b', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $other->id]);
+        $extension = Extension::create(['tenant_id' => $other->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't2-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+
+        $this->actingAs($admin)
+            ->postJson('/administracao/acompanhamento/ramais/'.$extension->id.'/deslogar')
+            ->assertForbidden();
     }
 }

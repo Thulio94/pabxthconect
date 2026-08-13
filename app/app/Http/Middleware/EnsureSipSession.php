@@ -21,7 +21,10 @@ class EnsureSipSession
         $agent = $request->session()->get('sip_agent');
         if (! $request->user() || ! $agent || (int) ($agent['user_id'] ?? 0) !== $request->user()->id) {
             $request->session()->forget('sip_agent');
-            return redirect()->route('phone.login');
+
+            return $request->expectsJson()
+                ? response()->json(['message' => 'Sua sessão foi encerrada.', 'session_ended' => true], 401)
+                : redirect()->route('phone.login');
         }
 
         return $next($request);

@@ -262,6 +262,8 @@
 .supervision-actions { display:flex; gap:5px; }.supervision-action { min-height:30px; padding:5px 9px; border:1px solid #d4dfed; border-radius:7px; color:#365986; background:#fff; font-size:9px; font-weight:900; }.supervision-action:hover:not(:disabled) { color:#fff; border-color:#3155e7; background:#3155e7; }.supervision-action.barge:hover:not(:disabled) { border-color:#c93c50; background:#c93c50; }.supervision-action:disabled { opacity:.35; cursor:not-allowed; }
 .metric-cell { color:#294a78; font-family:"IBM Plex Mono",Consolas,monospace; font-size:11px; white-space:nowrap; }
 .supervision-action.details { color:#fff; border-color:#173867; background:#173867; }
+.supervision-action.force-logout { color:#a42337; border-color:#efc4cb; background:#fff5f6; }
+.supervision-action.force-logout:hover:not(:disabled) { color:#fff; border-color:#c93c50; background:#c93c50; }
 .operator-day-backdrop { position:fixed; z-index:59; inset:0; background:rgba(12,28,56,.35); backdrop-filter:blur(2px); }.operator-day-backdrop[hidden] { display:none; }
 .operator-day-drawer { position:fixed; z-index:60; top:0; right:0; width:min(590px,100vw); height:100vh; overflow:auto; padding:26px; color:#17325d; background:#fff; box-shadow:-24px 0 70px rgba(16,35,72,.24); }.operator-day-drawer[hidden] { display:none; }
 .operator-day-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding-bottom:18px; border-bottom:1px solid #dfe7f2; }.operator-day-head h2 { margin:6px 0 3px; }.operator-day-head small { color:#6c809f; }.operator-day-head button { width:38px; height:38px; border:0; border-radius:10px; color:#47658e; background:#edf2f8; font-size:25px; }
