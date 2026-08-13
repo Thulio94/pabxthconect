@@ -19,8 +19,9 @@ class PhoneCallFlowTest extends TestCase
     public function test_dashboard_shows_the_twenty_five_latest_real_pbx_calls(): void
     {
         [$tenant, $extension] = $this->extension();
+        $operationDayStart = now(config('app.display_timezone'))->startOfDay()->utc();
         foreach (range(1, 30) as $index) {
-            CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => "551199990{$index}", 'status' => 'completed', 'started_at' => now()->startOfDay()->addMinutes($index), 'ended_at' => now()]);
+            CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => "551199990{$index}", 'status' => 'completed', 'started_at' => $operationDayStart->copy()->addMinutes($index), 'ended_at' => now()]);
         }
         CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => '5511888888888', 'status' => 'completed', 'started_at' => now()->subDay()]);
 
@@ -28,7 +29,7 @@ class PhoneCallFlowTest extends TestCase
         $response->assertOk();
         $history = collect($response->viewData('history'));
         $this->assertCount(25, $history);
-        $this->assertTrue($history->every(fn (CallRecord $call) => $call->started_at->isToday()));
+        $this->assertTrue($history->every(fn (CallRecord $call) => $call->started_at->copy()->timezone(config('app.display_timezone'))->isToday()));
     }
 
     public function test_agent_can_only_play_its_own_pbx_recording(): void
