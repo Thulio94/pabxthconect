@@ -37,96 +37,85 @@ class AdminSupervisionController extends Controller
 
     public function agents(Request $request, CallStateReconciler $callState): JsonResponse
     {
-        $tenantId = $request->validate(['tenant_id' => ['required', Rule::exists('tenants', 'id')]])['tenant_id'];
-        $this->authorizeTenant($request, (int) $tenantId);
+        $tenantId = (int) $request->validate(['tenant_id' => ['required', Rule::exists('tenants', 'id')]])['tenant_id'];
+        $this->authorizeTenant($request, $tenantId);
         [$dayStart, $dayEnd] = $this->operationDayBounds();
         $staleBefore = now()->subSeconds(45);
+        $presenceAvailable = Schema::hasColumns('extension_presences', ['extension_id', 'state', 'state_since', 'heartbeat_at']);
+        $relations = ['user:id,name,email'];
+        if ($presenceAvailable) {
+            $relations[] = Schema::hasTable('pause_reasons') ? 'presence.pauseReason' : 'presence';
+        }
+
+        $extensions = Extension::query()->with($relations)
+            ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get();
+        $extensionIds = $extensions->pluck('id');
 
         try {
-
-            $presenceAvailable = Schema::hasTable('extension_presences');
-            $metricsAvailable = Schema::hasTable('operator_sessions') && Schema::hasTable('operator_pause_sessions');
-            $relations = ['user:id,name,email'];
-            if ($presenceAvailable && Schema::hasTable('pause_reasons')) {
-                $relations[] = 'presence.pauseReason';
-            }
-
-            $extensions = Extension::query()->with($relations)
-                ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get();
-            $extensionIds = $extensions->pluck('id');
             $callState->reconcile($extensionIds);
-            $calls = CallRecord::query()->whereIn('extension_id', $extensionIds)->where('started_at', '>=', $dayStart)->where('started_at', '<', $dayStart->copy()->addDay())->get()->groupBy('extension_id');
-            $sessions = $metricsAvailable
-                ? OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
-                    ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))->get()->groupBy('extension_id')
-                : collect();
-            $pauses = $metricsAvailable
-                ? OperatorPauseSession::query()->whereIn('extension_id', $extensionIds)->where('started_at', '<=', $dayEnd)
-                    ->where(fn ($query) => $query->whereNull('ended_at')->orWhere('ended_at', '>=', $dayStart))->get()->groupBy('extension_id')
-                : collect();
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
 
-            $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
-                $agentCalls = $calls->get($extension->id, collect());
-                $call = $agentCalls->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->sortByDesc('id')->first();
-                $presence = $presenceAvailable ? $extension->presence : null;
-                $online = $presence?->heartbeat_at?->gte($staleBefore) ?? false;
-                $state = $call ? ($call->status === 'answered' ? 'talking' : 'calling') : ($online ? ($presence->state === 'paused' ? 'paused' : 'available') : 'offline');
-                $since = $call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at;
+        $calls = $this->supervisionMetric(function () use ($extensionIds, $dayStart) {
+            return CallRecord::query()->whereIn('extension_id', $extensionIds)
+                ->where('started_at', '>=', $dayStart)->where('started_at', '<', $dayStart->copy()->addDay())
+                ->get()->groupBy('extension_id');
+        });
+        $sessions = Schema::hasColumns('operator_sessions', ['extension_id', 'logged_in_at', 'last_seen_at', 'logged_out_at'])
+            ? $this->supervisionMetric(function () use ($extensionIds, $dayStart, $dayEnd) {
+                return OperatorSession::query()->whereIn('extension_id', $extensionIds)->where('logged_in_at', '<=', $dayEnd)
+                    ->where(fn ($query) => $query->whereNull('logged_out_at')->orWhere('logged_out_at', '>=', $dayStart))
+                    ->get()->groupBy('extension_id');
+            }) : collect();
+        $pauses = Schema::hasColumns('operator_pause_sessions', ['extension_id', 'started_at', 'ended_at'])
+            ? $this->supervisionMetric(function () use ($extensionIds, $dayStart, $dayEnd) {
+                return OperatorPauseSession::query()->whereIn('extension_id', $extensionIds)->where('started_at', '<=', $dayEnd)
+                    ->where(fn ($query) => $query->whereNull('ended_at')->orWhere('ended_at', '>=', $dayStart))
+                    ->get()->groupBy('extension_id');
+            }) : collect();
 
-                return [
-                    'id' => $extension->id,
-                    'number' => (string) $extension->number,
-                    'name' => $extension->user?->name ?? 'Sem usuário',
-                    'email' => $extension->user?->email,
-                    'state' => $state,
-                    'status_label' => match ($state) {
-                        'talking' => 'Falando', 'calling' => 'Chamando', 'paused' => $presence?->pauseReason?->name ?? 'Em pausa',
-                        'available' => 'Disponível', default => 'Offline',
-                    },
-                    'status_color' => $state === 'paused' ? ($presence?->pauseReason?->color ?? '#f4b000') : null,
-                    'since' => $since?->toIso8601String(),
-                    'call' => $call ? ['id' => $call->id, 'number' => $call->to_number, 'status' => $call->status, 'started_at' => $call->started_at?->toIso8601String()] : null,
-                    'calls_today' => $agentCalls->count(),
-                    'answered_today' => $agentCalls->whereNotNull('answered_at')->count(),
-                    'average_seconds' => (int) round($agentCalls->where('duration_seconds', '>', 0)->avg('duration_seconds') ?? 0),
-                    'talk_seconds' => (int) $agentCalls->sum(fn (CallRecord $item) => $item->answered_at ? $item->answered_at->diffInSeconds($item->ended_at ?? now()) : 0),
-                    'logged_seconds' => (int) $sessions->get($extension->id, collect())->sum(fn (OperatorSession $item) => $this->sessionSeconds($item, $dayStart, $dayEnd, $online)),
-                    'pause_seconds' => (int) $pauses->get($extension->id, collect())->sum(fn (OperatorPauseSession $item) => $this->intervalSeconds($item->started_at, $item->ended_at ?? ($online ? now() : ($presence?->heartbeat_at ?? now())), $dayStart, $dayEnd)),
-                ];
-            });
+        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses) {
+            $agentCalls = $calls->get($extension->id, collect());
+            $call = $agentCalls->whereNull('ended_at')->where('started_at', '>=', now()->subHours(4))->sortByDesc('id')->first();
+            $presence = $presenceAvailable ? $extension->presence : null;
+            $online = $presence?->heartbeat_at?->gte($staleBefore) ?? false;
+            $state = $call ? ($call->status === 'answered' ? 'talking' : 'calling') : ($online ? ($presence->state === 'paused' ? 'paused' : 'available') : 'offline');
+            $since = $call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at;
 
-            return response()->json(['agents' => $agents, 'generated_at' => now()->toIso8601String(), 'degraded' => false]);
+            return [
+                'id' => $extension->id,
+                'number' => (string) $extension->number,
+                'name' => $extension->user?->name ?? 'Sem usuário',
+                'email' => $extension->user?->email,
+                'state' => $state,
+                'status_label' => match ($state) {
+                    'talking' => 'Falando', 'calling' => 'Chamando', 'paused' => $presence?->pauseReason?->name ?? 'Em pausa',
+                    'available' => 'Disponível', default => 'Offline',
+                },
+                'status_color' => $state === 'paused' ? ($presence?->pauseReason?->color ?? '#f4b000') : null,
+                'since' => $since?->toIso8601String(),
+                'call' => $call ? ['id' => $call->id, 'number' => $call->to_number, 'status' => $call->status, 'started_at' => $call->started_at?->toIso8601String()] : null,
+                'calls_today' => $agentCalls->count(),
+                'answered_today' => $agentCalls->whereNotNull('answered_at')->count(),
+                'average_seconds' => (int) round($agentCalls->where('duration_seconds', '>', 0)->avg('duration_seconds') ?? 0),
+                'talk_seconds' => (int) $agentCalls->sum(fn (CallRecord $item) => $item->answered_at ? $item->answered_at->diffInSeconds($item->ended_at ?? now()) : 0),
+                'logged_seconds' => (int) $sessions->get($extension->id, collect())->sum(fn (OperatorSession $item) => $this->sessionSeconds($item, $dayStart, $dayEnd, $online)),
+                'pause_seconds' => (int) $pauses->get($extension->id, collect())->sum(fn (OperatorPauseSession $item) => $this->intervalSeconds($item->started_at, $item->ended_at ?? ($online ? now() : ($presence?->heartbeat_at ?? now())), $dayStart, $dayEnd)),
+            ];
+        });
+
+        return response()->json(['agents' => $agents, 'generated_at' => now()->toIso8601String(), 'degraded' => false]);
+    }
+
+    private function supervisionMetric(callable $query)
+    {
+        try {
+            return $query();
         } catch (\Throwable $exception) {
             report($exception);
 
-            // Acompanhamento é ferramenta operacional: uma falha em métricas,
-            // presença ou AMI não pode derrubar a lista inteira com HTTP 500.
-            $agents = Extension::query()->with('user:id,name,email')
-                ->where('tenant_id', $tenantId)->where('status', 'active')->orderBy('number')->get()
-                ->map(fn (Extension $extension) => [
-                    'id' => $extension->id,
-                    'number' => (string) $extension->number,
-                    'name' => $extension->user?->name ?? 'Sem usuário',
-                    'email' => $extension->user?->email,
-                    'state' => 'offline',
-                    'status_label' => 'Indisponível',
-                    'status_color' => null,
-                    'since' => null,
-                    'call' => null,
-                    'calls_today' => 0,
-                    'answered_today' => 0,
-                    'average_seconds' => 0,
-                    'talk_seconds' => 0,
-                    'logged_seconds' => 0,
-                    'pause_seconds' => 0,
-                ]);
-
-            return response()->json([
-                'agents' => $agents,
-                'generated_at' => now()->toIso8601String(),
-                'degraded' => true,
-                'warning' => 'Dados em tempo real temporariamente indisponíveis; a lista básica foi preservada.',
-            ]);
+            return collect();
         }
     }
 

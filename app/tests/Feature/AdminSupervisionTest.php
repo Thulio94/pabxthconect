@@ -11,6 +11,7 @@ use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Pbx\CallStateReconciler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -129,5 +130,24 @@ class AdminSupervisionTest extends TestCase
 
         $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
             ->assertOk()->assertJsonPath('agents.0.state', 'offline')->assertJsonPath('agents.0.logged_seconds', 0);
+    }
+
+    public function test_temporary_reconciliation_failure_does_not_degrade_the_agent_list(): void
+    {
+        $tenant = Tenant::create(['name' => 'Operacao resiliente', 'slug' => 'operacao-ami-resiliente', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
+
+        $this->mock(CallStateReconciler::class)
+            ->shouldReceive('reconcile')
+            ->once()
+            ->andThrow(new \RuntimeException('AMI temporariamente indisponivel'));
+
+        $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
+            ->assertOk()
+            ->assertJsonPath('degraded', false)
+            ->assertJsonPath('agents.0.state', 'available');
     }
 }

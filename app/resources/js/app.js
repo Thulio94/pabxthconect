@@ -1,5 +1,131 @@
 import JsSIP from 'jssip';
 
+const initializeAdminNavigation = () => {
+    const shell = document.querySelector('.app-shell');
+    const sidebar = document.querySelector('#adminSidebar');
+    const toggle = document.querySelector('#sidebarToggle');
+    if (!shell || !sidebar || !toggle) return;
+
+    const applyExpanded = (expanded) => {
+        shell.classList.toggle('sidebar-expanded', expanded);
+        sidebar.classList.toggle('expanded', expanded);
+        toggle.setAttribute('aria-expanded', String(expanded));
+        toggle.setAttribute('aria-label', expanded ? 'Recolher menu' : 'Expandir menu');
+    };
+    applyExpanded(window.localStorage.getItem('thconect-sidebar') === 'expanded');
+    toggle.addEventListener('click', () => {
+        const expanded = !sidebar.classList.contains('expanded');
+        applyExpanded(expanded);
+        window.localStorage.setItem('thconect-sidebar', expanded ? 'expanded' : 'collapsed');
+    });
+    sidebar.querySelectorAll('.side-menu-trigger').forEach((trigger) => trigger.addEventListener('click', () => {
+        const menu = trigger.closest('.side-menu');
+        if (window.matchMedia('(max-width: 760px)').matches) {
+            const destination = menu?.querySelector('.side-submenu a')?.href;
+            if (destination) window.location.assign(destination);
+            return;
+        }
+        const open = !menu.classList.contains('open');
+        menu.classList.toggle('open', open);
+        trigger.setAttribute('aria-expanded', String(open));
+        if (!sidebar.classList.contains('expanded')) {
+            applyExpanded(true);
+            window.localStorage.setItem('thconect-sidebar', 'expanded');
+        }
+    }));
+};
+
+const initializeAdminContextModals = () => {
+    const admin = document.querySelector('.pbx-admin');
+    if (!admin) return;
+
+    document.querySelector('.pbx-rail')?.setAttribute('id', 'visao-geral');
+    const createPanels = document.querySelectorAll('.pbx-form-grid > .panel');
+    ['nova-rota', 'nova-empresa', 'usuarios-ramais'].forEach((id, index) => createPanels[index]?.setAttribute('id', id));
+    document.querySelectorAll('.pbx-registry')[1]?.setAttribute('id', 'diagnostico');
+
+    const modal = document.createElement('div');
+    modal.className = 'context-modal';
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    modal.innerHTML = '<div class="context-modal-backdrop" data-context-close></div><section class="context-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="contextModalTitle"><header><div><p class="eyebrow">CONFIGURAÇÕES</p><h2 id="contextModalTitle">Gerenciar</h2></div><button type="button" class="context-modal-close" data-context-close aria-label="Fechar">×</button></header><div class="context-modal-body"></div></section>';
+    document.body.append(modal);
+    const body = modal.querySelector('.context-modal-body');
+    const title = modal.querySelector('#contextModalTitle');
+    let source = null;
+    let placeholder = null;
+    let opener = null;
+
+    const close = () => {
+        if (source && placeholder?.parentNode) placeholder.parentNode.replaceChild(source, placeholder);
+        source = null; placeholder = null;
+        modal.hidden = true;
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('modal-open');
+        opener?.focus(); opener = null;
+    };
+    const open = (target, label, trigger) => {
+        if (!target?.parentNode) return;
+        opener = trigger;
+        source = target;
+        placeholder = document.createComment('modal-source');
+        target.parentNode.replaceChild(placeholder, target);
+        body.replaceChildren(target);
+        if (target.matches('details')) target.open = true;
+        title.textContent = label;
+        modal.hidden = false;
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('modal-open');
+        modal.querySelector('.context-modal-close').focus();
+    };
+    modal.querySelectorAll('[data-context-close]').forEach((button) => button.addEventListener('click', close));
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !modal.hidden) close(); });
+
+    const createUser = admin.querySelector('.create-user-disclosure');
+    if (createUser) {
+        createUser.open = true;
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'button button-primary'; button.textContent = 'Criar usuário e ramal';
+        createUser.parentNode.insertBefore(button, createUser);
+        button.addEventListener('click', () => open(createUser, 'Criar usuário e ramal', button));
+    }
+
+    admin.querySelectorAll('.tenant-card').forEach((card) => {
+        card.open = true;
+        const summary = card.querySelector(':scope > summary');
+        summary?.addEventListener('click', (event) => event.preventDefault());
+        const detail = card.querySelector('.tenant-detail-grid');
+        if (!detail || !summary) return;
+        const inlineForm = detail.querySelector(':scope > .inline-form');
+        const routeList = detail.querySelector(':scope > .tenant-routes');
+        const routePanel = document.createElement('div'); routePanel.className = 'tenant-route-management';
+        if (inlineForm) routePanel.append(inlineForm);
+        if (routeList) routePanel.append(routeList);
+        detail.append(routePanel);
+        const panels = [
+            ['Editar empresa', detail.querySelector(':scope > .crud-full')],
+            ['Usuários e ramais', detail.querySelector(':scope > .extension-list')],
+            ['Vincular rotas', routePanel],
+            ['Configurar pausas', detail.querySelector(':scope > .tenant-pause-settings')],
+        ];
+        const actions = document.createElement('div'); actions.className = 'tenant-card-actions';
+        panels.forEach(([label, panel]) => {
+            if (!panel) return;
+            const count = label.startsWith('Usuários') ? card.querySelectorAll('.extension-list > details').length : label.startsWith('Configurar') ? card.querySelectorAll('.pause-item').length : label.startsWith('Vincular') ? card.querySelectorAll('.tenant-routes form').length : null;
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-soft';
+            button.textContent = count === null ? label : `${label} · ${count}`;
+            button.addEventListener('click', () => open(panel, `${label} · ${summary.querySelector('strong')?.textContent || 'empresa'}`, button));
+            actions.append(button);
+        });
+        summary.insertAdjacentElement('afterend', actions);
+    });
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    initializeAdminNavigation();
+    initializeAdminContextModals();
+});
+
 const phoneInput = document.querySelector('#phone');
 const phoneHelp = document.querySelector('#phoneHelp');
 
