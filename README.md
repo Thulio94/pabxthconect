@@ -1,5 +1,7 @@
 # Thconect Phone
 
+> Antes de alterar discagem, rotas, Asterisk, gravação ou produção, leia [`docs/PBX_GUARDRAILS.md`](docs/PBX_GUARDRAILS.md) e execute `scripts/verify-pbx-invariants.ps1 -RunTests`.
+
 Central PBX SaaS multiempresa em Laravel, Asterisk e WebRTC. O sistema provisiona os próprios usuários e ramais, envia chamadas por rotas SIP compartilháveis e mantém histórico e gravações por empresa.
 
 ## Fluxo
