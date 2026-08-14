@@ -89,6 +89,7 @@
                         <p><strong>Teste de áudio:</strong> reproduz um bip na saída selecionada.</p>
                     </div>
                     <div class="audio-console-actions">
+                        <button class="button audio-check-button" id="audioPreflightButton" type="button">Verificar tudo</button>
                         <button class="button button-primary" id="testMicrophoneButton" type="button">Testar microfone</button>
                         <button class="button button-soft" id="testSpeakerButton" type="button">Testar áudio de saída</button>
                     </div>

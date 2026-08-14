@@ -9,12 +9,30 @@ use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class PhoneCallFlowTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_dashboard_requires_audio_readiness_and_keeps_active_webrtc_diagnostics(): void
+    {
+        [$tenant, $extension] = $this->extension();
+
+        $this->actingAs($extension->user)
+            ->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
+            ->get('/telefone')
+            ->assertOk()
+            ->assertSee('id="audioPreflightButton"', false)
+            ->assertSee('Verificar tudo');
+
+        $javascript = File::get(resource_path('js/app.js'));
+        $this->assertStringContainsString('ensureAudioReadyForCall()', $javascript);
+        $this->assertStringContainsString('readWebRtcAudioStats', $javascript);
+        $this->assertStringContainsString("showAudioProblem('Problema no áudio da chamada'", $javascript);
+    }
 
     public function test_dashboard_shows_the_twenty_five_latest_real_pbx_calls(): void
     {
