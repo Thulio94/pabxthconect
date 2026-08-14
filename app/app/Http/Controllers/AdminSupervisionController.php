@@ -87,6 +87,9 @@ class AdminSupervisionController extends Controller
             $online = $presence?->heartbeat_at?->gte($staleBefore) ?? false;
             $state = $call ? ($call->status === 'answered' ? 'talking' : 'calling') : ($online ? ($presence->state === 'paused' ? 'paused' : 'available') : 'offline');
             $since = $state === 'offline' ? null : ($call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at);
+            if ($since?->lt($dayStart)) {
+                $since = $dayStart->copy();
+            }
 
             return [
                 'id' => $extension->id,

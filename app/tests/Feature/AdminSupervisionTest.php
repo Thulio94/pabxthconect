@@ -14,6 +14,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Pbx\CallStateReconciler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -59,6 +60,30 @@ class AdminSupervisionTest extends TestCase
 
         $this->assertDatabaseHas('call_records', ['id' => $call->id, 'status' => 'no_answer', 'duration_seconds' => 0]);
         $this->assertNotNull($call->fresh()->ended_at);
+    }
+
+    public function test_status_counter_restarts_at_midnight_in_the_operation_timezone(): void
+    {
+        $localNow = Carbon::parse('2026-08-14 00:10:00', 'America/Sao_Paulo');
+        $this->travelTo($localNow->copy()->utc());
+        $tenant = Tenant::create(['name' => 'Operação A', 'slug' => 'operacao-a', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        ExtensionPresence::create([
+            'extension_id' => $extension->id,
+            'state' => 'available',
+            'state_since' => now()->subHours(8),
+            'heartbeat_at' => now(),
+        ]);
+
+        $dayStart = $localNow->copy()->startOfDay()->utc()->toIso8601String();
+
+        $this->actingAs($admin)
+            ->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
+            ->assertOk()
+            ->assertJsonPath('agents.0.state', 'available')
+            ->assertJsonPath('agents.0.since', $dayStart);
     }
 
     public function test_pauses_are_scoped_to_company_and_agent_can_change_presence(): void
