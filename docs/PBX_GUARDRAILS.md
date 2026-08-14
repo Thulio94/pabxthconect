@@ -89,6 +89,14 @@ Correção permanente:
 - Expor UDP 5060 indiscriminadamente; a rota TECH deve usar IPs autorizados e firewall.
 - Aplicar `DROP --dport 5060` sem limitar a interface de entrada: isso também bloqueia os INVITEs que saem do contêiner para o softswitch. Como este PBX somente origina chamadas, não publicar 5060 no Compose; se houver regra adicional, bloquear apenas tráfego novo recebido pela interface pública.
 
+## Confirmações da interface
+
+- Não usar `window.confirm()`, `confirm()` ou `onsubmit="return confirm(...)"`. Esses diálogos pertencem ao navegador, quebram a identidade visual e não oferecem uma experiência consistente.
+- Em formulários, usar o componente global declarativamente com `data-confirm`, `data-confirm-title`, `data-confirm-label` e, para ações destrutivas, `data-confirm-tone="danger"`.
+- Em ações JavaScript, usar `await window.ThconectDialog.confirm({ title, message, confirmLabel, tone, opener })`.
+- O modal compartilhado vive em `resources/views/layouts/app.blade.php`; comportamento e acessibilidade ficam em `resources/js/app.js`; estilo fica em `resources/css/app.css`. Novas páginas que estendem esse layout já recebem o componente automaticamente.
+- Mensagens devem dizer claramente o que será alterado e a consequência. O texto nunca deve expor segredo SIP, senha, token ou dado sensível de outra empresa.
+
 ## Checklist para mudanças críticas
 
 O workflow `.github/workflows/pbx-guardrails.yml` repete testes e build no GitHub. Configure a proteção da branch `main` para exigir o sucesso de **PBX critical guardrails / validate** antes de aceitar mudanças.

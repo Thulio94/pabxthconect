@@ -1,5 +1,81 @@
 import JsSIP from 'jssip';
 
+const initializeSystemConfirm = () => {
+    const root = document.querySelector('#systemConfirm');
+    if (!root) return;
+    const title = root.querySelector('#systemConfirmTitle');
+    const message = root.querySelector('#systemConfirmMessage');
+    const cancelButton = root.querySelector('.system-confirm-cancel');
+    const acceptButton = root.querySelector('.system-confirm-accept');
+    const bypassedForms = new WeakSet();
+    let resolver = null;
+    let opener = null;
+
+    const close = (accepted) => {
+        if (!resolver) return;
+        const resolve = resolver;
+        resolver = null;
+        root.hidden = true;
+        root.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('system-confirm-open');
+        opener?.focus?.();
+        opener = null;
+        resolve(accepted);
+    };
+    const confirm = (options = {}) => {
+        const settings = typeof options === 'string' ? { message: options } : options;
+        if (resolver) close(false);
+        title.textContent = settings.title || 'Confirmar ação?';
+        message.textContent = settings.message || 'Revise os dados antes de continuar.';
+        acceptButton.textContent = settings.confirmLabel || 'Confirmar';
+        cancelButton.textContent = settings.cancelLabel || 'Cancelar';
+        root.dataset.tone = settings.tone === 'danger' ? 'danger' : 'primary';
+        opener = settings.opener || document.activeElement;
+        root.hidden = false;
+        root.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('system-confirm-open');
+        requestAnimationFrame(() => acceptButton.focus());
+        return new Promise((resolve) => { resolver = resolve; });
+    };
+
+    window.ThconectDialog = Object.freeze({ confirm });
+    root.querySelectorAll('[data-confirm-cancel]').forEach((control) => control.addEventListener('click', () => close(false)));
+    acceptButton.addEventListener('click', () => close(true));
+    root.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); close(false); return; }
+        if (event.key !== 'Tab') return;
+        const controls = [cancelButton, acceptButton];
+        const index = controls.indexOf(document.activeElement);
+        if (event.shiftKey && index <= 0) { event.preventDefault(); acceptButton.focus(); }
+        else if (!event.shiftKey && index === controls.length - 1) { event.preventDefault(); cancelButton.focus(); }
+    });
+    document.addEventListener('submit', async (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.dataset.confirm || bypassedForms.has(form)) {
+            if (form instanceof HTMLFormElement) bypassedForms.delete(form);
+            return;
+        }
+        event.preventDefault();
+        const submitter = event.submitter;
+        const accepted = await confirm({
+            title: form.dataset.confirmTitle,
+            message: form.dataset.confirm,
+            confirmLabel: form.dataset.confirmLabel,
+            cancelLabel: form.dataset.confirmCancelLabel,
+            tone: form.dataset.confirmTone,
+            opener: submitter,
+        });
+        if (!accepted) return;
+        bypassedForms.add(form);
+        if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit(submitter || undefined);
+            queueMicrotask(() => bypassedForms.delete(form));
+        } else {
+            form.submit();
+        }
+    });
+};
+
 const initializeAdminNavigation = () => {
     const shell = document.querySelector('.app-shell');
     const sidebar = document.querySelector('#adminSidebar');
@@ -122,6 +198,7 @@ const initializeAdminContextModals = () => {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+    initializeSystemConfirm();
     initializeAdminNavigation();
     initializeAdminContextModals();
 });
@@ -1763,7 +1840,14 @@ if (supervisionConfig) {
     toggleOffline.addEventListener('click', () => { showOffline = !showOffline; render(); });
 
     const forceLogoutAgent = async (agent, button) => {
-        if (!window.confirm(`Deslogar ${agent.name} do telefone agora? A ação será registrada na auditoria.`)) return;
+        const accepted = await window.ThconectDialog.confirm({
+            title: 'Deslogar agente?',
+            message: `${agent.name} será desconectado do telefone agora. A ação ficará registrada na auditoria.`,
+            confirmLabel: 'Deslogar',
+            tone: 'danger',
+            opener: button,
+        });
+        if (!accepted) return;
         button.disabled = true;
         try {
             const payload = await request(`${supervisionConfig.logoutUrl}/${agent.id}/deslogar`, { method: 'POST' });
@@ -1818,7 +1902,12 @@ if (supervisionConfig) {
     };
     const legacyStartSupervision = async (agent, mode) => {
         const labels = { listen: 'ouvir silenciosamente', whisper: 'sussurrar para o agente', barge: 'entrar na ligação' };
-        if (!window.confirm(`Confirma ${labels[mode]} na chamada de ${agent.name}? A ação será registrada para auditoria.`)) return;
+        const accepted = await window.ThconectDialog.confirm({
+            title: 'Iniciar acompanhamento?',
+            message: `Você vai ${labels[mode]} na chamada de ${agent.name}. A ação ficará registrada na auditoria.`,
+            confirmLabel: 'Iniciar',
+        });
+        if (!accepted) return;
         try {
             const payload = await request(`${supervisionConfig.startUrl}/${agent.id}`, { method: 'POST', body: JSON.stringify({ mode }) });
             activeAuditId = payload.session_id;

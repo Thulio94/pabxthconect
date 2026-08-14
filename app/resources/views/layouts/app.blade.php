@@ -13,5 +13,20 @@
 </head>
 <body>
     @yield('body')
+    <div class="system-confirm" id="systemConfirm" hidden aria-hidden="true">
+        <div class="system-confirm-backdrop" data-confirm-cancel aria-hidden="true"></div>
+        <section class="system-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="systemConfirmTitle" aria-describedby="systemConfirmMessage">
+            <div class="system-confirm-signal" aria-hidden="true"><span></span><i></i></div>
+            <div class="system-confirm-content">
+                <p class="system-confirm-kicker">CONFIRMAÇÃO DA AÇÃO</p>
+                <h2 id="systemConfirmTitle">Confirmar ação?</h2>
+                <p id="systemConfirmMessage">Revise os dados antes de continuar.</p>
+                <div class="system-confirm-actions">
+                    <button type="button" class="system-confirm-cancel" data-confirm-cancel>Cancelar</button>
+                    <button type="button" class="system-confirm-accept" data-confirm-accept>Confirmar</button>
+                </div>
+            </div>
+        </section>
+    </div>
 </body>
 </html>

@@ -13,6 +13,21 @@ class PbxAdminFlowTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_shared_confirmation_dialog_is_available_without_native_browser_confirmations(): void
+    {
+        $admin = User::factory()->create(['role' => 'superadmin', 'must_change_password' => false]);
+        Tenant::create(['name' => 'Empresa Modal', 'slug' => 'empresa-modal', 'status' => 'active']);
+
+        $this->actingAs($admin)
+            ->get('/administracao')
+            ->assertOk()
+            ->assertSee('id="systemConfirm"', false)
+            ->assertSee('role="alertdialog"', false)
+            ->assertSee('data-confirm-title="Excluir empresa?"', false)
+            ->assertDontSee('return confirm(', false)
+            ->assertDontSee('window.confirm(', false);
+    }
+
     public function test_superadmin_creates_route_company_link_and_generated_extension(): void
     {
         config(['pbx.runtime_path' => storage_path('framework/testing/pbx-admin-runtime')]);
