@@ -25,8 +25,8 @@ class PhoneCallFlowTest extends TestCase
             ->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
             ->get('/telefone')
             ->assertOk()
-            ->assertSee('id="audioPreflightButton"', false)
-            ->assertSee('Verificar tudo');
+            ->assertSee('id="testMicrophoneButton"', false)
+            ->assertSee('Testar microfone');
 
         $javascript = File::get(resource_path('js/app.js'));
         $this->assertStringContainsString('ensureAudioReadyForCall()', $javascript);
