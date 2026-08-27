@@ -48,6 +48,13 @@ services:
       PBX_AMI_SECRET: ${PBX_AMI_SECRET:?Defina PBX_AMI_SECRET no Easypanel}
       PBX_SIP_DOMAIN: ${PBX_SIP_DOMAIN:?Defina PBX_SIP_DOMAIN no Easypanel}
       PBX_WEBSOCKET_URL: ${PBX_WEBSOCKET_URL:?Defina PBX_WEBSOCKET_URL no Easypanel}
+      TURN_PUBLIC_HOST: ${TURN_PUBLIC_HOST:-}
+      TURN_REALM: ${TURN_REALM:-}
+      TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-}
+      TURN_CREDENTIAL_TTL_SECONDS: ${TURN_CREDENTIAL_TTL_SECONDS:-900}
+      TURN_TLS_ENABLED: ${TURN_TLS_ENABLED:-true}
+      TURN_PORT: ${TURN_PORT:-3478}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
       MAIL_MAILER: log
     depends_on:
       postgres:
@@ -177,7 +184,9 @@ services:
       PBX_AMI_SECRET: ${PBX_AMI_SECRET:?Defina PBX_AMI_SECRET no Easypanel}
       PBX_PUBLIC_IP: ${PBX_PUBLIC_IP:?Defina PBX_PUBLIC_IP no Easypanel}
       PBX_LOCAL_NET: ${PBX_LOCAL_NET:-10.0.0.0/8}
+      PBX_DOCKER_LOCAL_NET: ${PBX_DOCKER_LOCAL_NET:-172.16.0.0/12}
     ports:
+      - "10101-10299:10101-10299/udp"
       - target: 10000
         published: 10000
         protocol: udp
@@ -490,12 +499,42 @@ services:
       timeout: 5s
       retries: 20
 
+  turn:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.turn
+    restart: unless-stopped
+    environment:
+      TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:?Defina TURN_AUTH_SECRET no Easypanel}
+      TURN_REALM: ${TURN_REALM:?Defina TURN_REALM no Easypanel}
+      TURN_EXTERNAL_IP: ${PBX_PUBLIC_IP:?Defina PBX_PUBLIC_IP no Easypanel}
+      TURN_PORT: ${TURN_PORT:-3478}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      TURN_RELAY_MIN_PORT: ${TURN_RELAY_MIN_PORT:-49160}
+      TURN_RELAY_MAX_PORT: ${TURN_RELAY_MAX_PORT:-49359}
+      TURN_TLS_ENABLED: ${TURN_TLS_ENABLED:-true}
+      TURN_TLS_CERT_FILE: ${TURN_TLS_CERT_FILE:-}
+      TURN_TLS_KEY_FILE: ${TURN_TLS_KEY_FILE:-}
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/tcp"
+      - "49160-49359:49160-49359/udp"
+    volumes:
+      - turn_certs:/etc/coturn/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "grep -aq turnserver /proc/1/cmdline"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
 volumes:
   postgres_data:
   redis_data:
   app_storage:
   pbx_runtime:
   pbx_recordings:
+  turn_certs:
 
 networks:
   easypanel:

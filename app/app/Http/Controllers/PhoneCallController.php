@@ -62,6 +62,7 @@ class PhoneCallController extends Controller
             'duration_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
             'sip_code' => ['nullable', 'integer', 'between:100,699'],
             'reason_phrase' => ['nullable', 'string', 'max:255'],
+            'media_diagnostics' => ['nullable', 'array'],
         ]);
 
         $requestedStatus = $data['status'];
@@ -85,6 +86,12 @@ class PhoneCallController extends Controller
             if (isset($data['sip_code']) || isset($data['reason_phrase'])) {
                 $updates['hangup_cause'] = trim('SIP '.($data['sip_code'] ?? '').' '.($data['reason_phrase'] ?? ''));
             }
+        }
+        if (isset($data['media_diagnostics'])) {
+            $updates['media_diagnostics'] = array_replace_recursive(
+                $callRecord->media_diagnostics ?? [],
+                ['browser' => $this->sanitizeMediaDiagnostics($data['media_diagnostics'])],
+            );
         }
         $callRecord->update($updates);
 
@@ -152,6 +159,33 @@ class PhoneCallController extends Controller
             'duration_seconds' => $call->effectiveDurationSeconds(),
             'has_recording' => $playable,
             'recording_url' => $playable ? route('phone.call-records.recording', $call) : null,
+        ];
+    }
+
+    /**
+     * Keep only aggregate WebRTC health data. Candidate addresses, credentials
+     * and SDP never belong in application storage.
+     */
+    private function sanitizeMediaDiagnostics(array $diagnostics): array
+    {
+        $webrtc = is_array($diagnostics['webrtc'] ?? null) ? $diagnostics['webrtc'] : [];
+        $integer = static fn (string $key): int => max(0, min(1000000000, (int) ($webrtc[$key] ?? 0)));
+
+        return [
+            'checked_at' => now()->toIso8601String(),
+            'state' => in_array($diagnostics['state'] ?? null, ['accepted', 'healthy', 'degraded', 'failed'], true) ? $diagnostics['state'] : 'degraded',
+            'webrtc' => [
+                'inbound_packets' => $integer('inbound_packets'),
+                'outbound_packets' => $integer('outbound_packets'),
+                'inbound_bytes' => $integer('inbound_bytes'),
+                'outbound_bytes' => $integer('outbound_bytes'),
+                'packets_lost' => $integer('packets_lost'),
+                'jitter_ms' => max(0, min(60000, (int) ($webrtc['jitter_ms'] ?? 0))),
+                'inbound_codec' => preg_replace('/[^A-Za-z0-9_\-\/]/', '', (string) ($webrtc['inbound_codec'] ?? '')),
+                'outbound_codec' => preg_replace('/[^A-Za-z0-9_\-\/]/', '', (string) ($webrtc['outbound_codec'] ?? '')),
+                'candidate_protocol' => in_array($webrtc['candidate_protocol'] ?? null, ['udp', 'tcp', 'tls'], true) ? $webrtc['candidate_protocol'] : null,
+                'candidate_type' => in_array($webrtc['candidate_type'] ?? null, ['host', 'srflx', 'relay', 'prflx'], true) ? $webrtc['candidate_type'] : null,
+            ],
         ];
     }
 }

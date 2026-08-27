@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CallRecord;
 use App\Models\Extension;
+use App\Services\Pbx\TurnCredentialFactory;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -12,7 +13,7 @@ use Illuminate\View\View;
 
 class AgentDashboardController extends Controller
 {
-    public function __invoke(Request $request): View|RedirectResponse
+    public function __invoke(Request $request, TurnCredentialFactory $turnCredentials): View|RedirectResponse
     {
         $agent = $request->session()->get('sip_agent');
         $extension = Extension::query()->with('tenant')->find($agent['extension_id'] ?? null);
@@ -32,8 +33,9 @@ class AgentDashboardController extends Controller
         $nextHistoryCursor = $historyInfiniteEnabled ? $historyPage->nextCursor()?->encode() : null;
 
         $pauseReasons = $tenant->pauseReasons()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'color', 'max_minutes']);
+        $iceServers = $turnCredentials->forExtension($extension);
 
-        return view('agent.dashboard', compact('agent', 'tenant', 'credentials', 'history', 'filters', 'historyInfiniteEnabled', 'nextHistoryCursor', 'pauseReasons'));
+        return view('agent.dashboard', compact('agent', 'tenant', 'credentials', 'history', 'filters', 'historyInfiniteEnabled', 'nextHistoryCursor', 'pauseReasons', 'iceServers'));
     }
 
     public function history(Request $request): JsonResponse

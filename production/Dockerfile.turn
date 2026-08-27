@@ -1,0 +1,5 @@
+FROM coturn/coturn:4.6.3
+
+COPY --chmod=0755 production/coturn/entrypoint.sh /usr/local/bin/thconect-turn-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/thconect-turn-entrypoint"]

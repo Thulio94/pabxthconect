@@ -26,11 +26,14 @@ class PhoneCallFlowTest extends TestCase
             ->get('/telefone')
             ->assertOk()
             ->assertSee('id="testMicrophoneButton"', false)
+            ->assertSee('id="testCallAudioButton"', false)
             ->assertSee('Testar microfone');
 
         $javascript = File::get(resource_path('js/app.js'));
         $this->assertStringContainsString('ensureAudioReadyForCall()', $javascript);
         $this->assertStringContainsString('readWebRtcAudioStats', $javascript);
+        $this->assertStringContainsString('mediaDiagnosticPayload', $javascript);
+        $this->assertStringContainsString('startInternalAudioTest', $javascript);
         $this->assertStringContainsString("showAudioProblem('Problema no áudio da chamada'", $javascript);
     }
 
@@ -107,6 +110,35 @@ class PhoneCallFlowTest extends TestCase
 
         $this->assertDatabaseCount('call_records', 1);
         $this->assertDatabaseCount('recordings', 1);
+    }
+
+    public function test_agent_can_persist_sanitized_webrtc_media_diagnostics(): void
+    {
+        [$tenant, $extension] = $this->extension();
+        $call = CallRecord::create([
+            'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound',
+            'to_number' => '5581999999999', 'status' => 'answered', 'started_at' => now(), 'answered_at' => now(),
+        ]);
+
+        $this->actingAs($extension->user)->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
+            ->patchJson("/telefone/chamadas/{$call->id}", [
+                'status' => 'answered',
+                'media_diagnostics' => [
+                    'state' => 'healthy',
+                    'webrtc' => [
+                        'inbound_packets' => 123, 'outbound_packets' => 456, 'inbound_bytes' => 1000,
+                        'outbound_bytes' => 2000, 'packets_lost' => 2, 'jitter_ms' => 12,
+                        'inbound_codec' => 'opus', 'outbound_codec' => 'PCMU',
+                        'candidate_protocol' => 'udp', 'candidate_type' => 'relay', 'private_address' => 'must-not-save',
+                    ],
+                ],
+            ])->assertOk();
+
+        $diagnostics = $call->fresh()->media_diagnostics;
+        $this->assertSame('healthy', data_get($diagnostics, 'browser.state'));
+        $this->assertSame(123, data_get($diagnostics, 'browser.webrtc.inbound_packets'));
+        $this->assertSame('relay', data_get($diagnostics, 'browser.webrtc.candidate_type'));
+        $this->assertNull(data_get($diagnostics, 'browser.webrtc.private_address'));
     }
 
     private function extension(string $suffix = ''): array

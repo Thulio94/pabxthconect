@@ -55,6 +55,7 @@ class PbxProvisioningTest extends TestCase
         $dialplan = File::get($runtime.'/extensions_tenants.conf');
         $this->assertStringContainsString("[{$firstExtension->sip_username}]", $endpoints);
         $this->assertStringContainsString('identify_by=username,auth_username', $endpoints);
+        $this->assertStringContainsString('rtp_symmetric=yes', $endpoints);
         $this->assertStringContainsString('Set(TH_DEST=${FILTER(0-9,${EXTEN})})', $dialplan);
         $this->assertStringContainsString('Set(TH_DEST=55${TH_DEST})', $dialplan);
         $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,g)', $dialplan);
@@ -71,8 +72,17 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString("ChanSpy(PJSIP,qbwg(extension-{$firstExtension->id}))", $dialplan);
         $this->assertStringContainsString("ChanSpy(PJSIP,qbBg(extension-{$firstExtension->id}))", $dialplan);
         $this->assertStringContainsString("Set(SPYGROUP=extension-{$firstExtension->id})", $dialplan);
+        $this->assertStringContainsString("exten => *900,1,NoOp(WebRTC audio check for extension {$firstExtension->id})", $dialplan);
+        $this->assertStringContainsString('same => n,Echo()', $dialplan);
         $this->assertStringNotContainsString("Set(__SPYGROUP=extension-{$firstExtension->id})", $dialplan);
         $this->assertStringNotContainsString('qEg(', $dialplan);
         $this->assertStringNotContainsString($firstExtension->sip_secret, $dialplan);
+
+        $trunks = File::get($runtime.'/pjsip_trunks.conf');
+        $this->assertStringContainsString('direct_media=no', $trunks);
+        $this->assertStringContainsString('force_rport=yes', $trunks);
+        $this->assertStringContainsString('rewrite_contact=yes', $trunks);
+        $this->assertStringContainsString('rtp_symmetric=yes', $trunks);
+
     }
 }

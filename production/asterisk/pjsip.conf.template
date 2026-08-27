@@ -9,6 +9,7 @@ bind = 0.0.0.0:5060
 external_signaling_address = __PBX_PUBLIC_IP__
 external_media_address = __PBX_PUBLIC_IP__
 local_net = __PBX_LOCAL_NET__
+local_net = __PBX_DOCKER_LOCAL_NET__
 
 [transport-ws]
 type = transport
@@ -17,6 +18,7 @@ bind = 0.0.0.0
 external_signaling_address = __PBX_PUBLIC_IP__
 external_media_address = __PBX_PUBLIC_IP__
 local_net = __PBX_LOCAL_NET__
+local_net = __PBX_DOCKER_LOCAL_NET__
 
 #include "generated/pjsip_endpoints.conf"
 #include "generated/pjsip_trunks.conf"

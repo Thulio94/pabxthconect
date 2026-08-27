@@ -12,6 +12,7 @@ use App\Models\SupervisionSession;
 use App\Models\Tenant;
 use App\Services\OperatorActivityRecorder;
 use App\Services\Pbx\CallStateReconciler;
+use App\Services\Pbx\TurnCredentialFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -22,17 +23,20 @@ use Illuminate\View\View;
 
 class AdminSupervisionController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, TurnCredentialFactory $turnCredentials): View
     {
         $tenantQuery = Tenant::query()->when($request->user()->isTenantAdmin(), fn ($query) => $query->whereKey($request->user()->tenant_id));
         $tenantId = $request->user()->isTenantAdmin()
             ? $request->user()->tenant_id
             : ($request->integer('tenant_id') ?: (clone $tenantQuery)->where('status', 'active')->value('id'));
 
+        $supervisorExtension = $request->user()->pbxExtension()->firstOrFail();
+
         return view('admin.supervision', [
             'tenants' => $tenantQuery->orderBy('name')->get(['id', 'name', 'status']),
             'selectedTenantId' => $tenantId,
-            'credentials' => $this->supervisorCredentials($request),
+            'credentials' => $this->supervisorCredentials($supervisorExtension),
+            'iceServers' => $turnCredentials->forExtension($supervisorExtension),
         ]);
     }
 
@@ -298,10 +302,8 @@ class AdminSupervisionController extends Controller
         return back()->with('status', 'Pausa excluída.');
     }
 
-    private function supervisorCredentials(Request $request): array
+    private function supervisorCredentials(Extension $extension): array
     {
-        $extension = $request->user()->pbxExtension()->firstOrFail();
-
         return ['sip_user' => $extension->sip_username, 'sip_pass' => $extension->sip_secret, 'sip_host' => config('pbx.sip_domain'), 'sip_ws_uri' => config('pbx.websocket_url')];
     }
 

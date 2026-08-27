@@ -7,7 +7,8 @@ Esta pasta é isolada do ambiente local. O Easypanel deve usar `production/compo
 - Ubuntu novo com Easypanel instalado;
 - IPv4 público fixo;
 - DNS de `phone.seudominio.com.br` e `ws.seudominio.com.br` apontando para a VPS;
-- portas `80/tcp`, `443/tcp` e `10000-10100/udp` liberadas;
+- portas `80/tcp`, `443/tcp` e `10000-10299/udp` liberadas;
+- para TURN: `3478/tcp+udp`, `5349/tcp` e `49160-49359/udp` liberadas;
 - saída UDP 5060 da VPS para o softswitch permitida, sem publicar 5060 no Docker;
 - IP público da VPS autorizado no softswitch para as rotas TECH.
 
@@ -69,13 +70,14 @@ PBX_WEBSOCKET_URL=wss://ws.seudominio.com.br/asterisk/ws
 
 ## 5. Volumes persistentes
 
-O Compose cria cinco volumes:
+O Compose cria seis volumes:
 
 - `postgres_data`: banco;
 - `redis_data`: sessões, cache e filas;
 - `app_storage`: storage do Laravel;
 - `pbx_runtime`: ramais, rotas e credencial AMI gerados;
 - `pbx_recordings`: gravações compartilhadas por Laravel e Asterisk.
+- `turn_certs`: certificado e chave privados usados apenas pelo Coturn.
 
 O segredo AMI permanece com permissão `0600`. Os WAVs do `MixMonitor` devem ser criados com permissão `0644`, pois o Asterisk grava como `root` e o Laravel precisa ler o mesmo volume.
 
@@ -94,7 +96,7 @@ Snapshots da VPS não substituem backup externo.
 
 ## 7. Verificação após o deploy
 
-Confirme nos logs que `app`, `nginx`, `postgres`, `redis`, `asterisk`, `queue`, `scheduler` e `pbx-events` estão ativos.
+Confirme nos logs que `app`, `nginx`, `postgres`, `redis`, `asterisk`, `queue`, `scheduler`, `pbx-events` e `turn` estão ativos.
 
 No shell do serviço `app`:
 
@@ -127,6 +129,6 @@ Depois valide, nesta ordem:
 
 ## 8. Observações de capacidade
 
-O intervalo `10000-10100/udp` oferece 101 portas RTP e é apropriado para a primeira operação. Antes de ultrapassar aproximadamente 20 chamadas simultâneas, faça teste de carga e considere ampliar o intervalo RTP.
+O intervalo `10000-10299/udp` oferece 300 portas RTP. Ele foi dimensionado com margem para o perfil inicial de até 50 chamadas simultâneas, supervisão e tentativas em paralelo. O TURN usa a faixa separada `49160-49359/udp` e deve ser validado em uma rede restritiva antes da operação.
 
 O serviço Asterisk deve manter uma única réplica. Não ative zero-downtime ou múltiplas réplicas para Asterisk, PostgreSQL ou Redis.

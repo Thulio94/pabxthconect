@@ -87,10 +87,15 @@
                     <div class="audio-test-guide">
                         <p><strong>Teste do microfone:</strong> fale normalmente; você verá o medidor e ouvirá sua voz por 10 segundos na saída selecionada.</p>
                         <p><strong>Teste de áudio:</strong> reproduz um bip na saída selecionada.</p>
+                        <p><strong>Teste de conexão:</strong> cria uma chamada interna de eco com o PBX; não usa a rota ou gera cobrança.</p>
                     </div>
                     <div class="audio-console-actions">
                         <button class="button button-primary" id="testMicrophoneButton" type="button">Testar microfone</button>
                         <button class="button button-soft" id="testSpeakerButton" type="button">Testar áudio de saída</button>
+                        <button class="button audio-check-button" id="testCallAudioButton" type="button">Testar conexão PBX</button>
+                    </div>
+                    <div class="call-media-status" id="callMediaStatus" aria-live="polite">
+                        <strong>Mídia da chamada</strong><span>Aguardando uma chamada para medir envio e recebimento de áudio.</span>
                     </div>
                     <p class="audio-console-message" id="audioConsoleMessage" aria-live="polite">Use um fone para o retorno do microfone e evitar microfonia.</p>
             </aside>
@@ -212,7 +217,7 @@ window.__SIP_CONFIG__ = {{ Illuminate\Support\Js::from([
     'domain' => $credentials['sip_host'],
     'server' => $credentials['sip_host'],
     'websocketUrl' => $credentials['sip_ws_uri'],
-    'iceServers' => [],
+    'iceServers' => $iceServers,
     'recordCalls' => (bool) $tenant->record_calls,
     'callsBaseUrl' => url('/telefone/chamadas'),
     'historyFilters' => $filters,

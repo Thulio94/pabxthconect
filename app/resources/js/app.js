@@ -270,8 +270,10 @@ if (config) {
         microphoneLevel: document.querySelector('#microphoneLevel'),
         audioMeter: document.querySelector('.audio-meter'),
         audioConsoleMessage: document.querySelector('#audioConsoleMessage'),
+        callMediaStatus: document.querySelector('#callMediaStatus'),
         testMicrophoneButton: document.querySelector('#testMicrophoneButton'),
         testSpeakerButton: document.querySelector('#testSpeakerButton'),
+        testCallAudioButton: document.querySelector('#testCallAudioButton'),
         microphoneVolume: document.querySelector('#microphoneVolume'),
         microphoneVolumeValue: document.querySelector('#microphoneVolumeValue'),
         microphoneMuteButton: document.querySelector('#microphoneMuteButton'),
@@ -295,7 +297,7 @@ if (config) {
     };
 
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
-    const pcConfig = config.iceServers?.length ? { iceServers: config.iceServers } : undefined;
+    const pcConfig = config.iceServers?.length ? { iceServers: config.iceServers, iceTransportPolicy: 'all' } : undefined;
     const socket = new JsSIP.WebSocketInterface(config.websocketUrl);
     const uaOptions = {
         uri: config.uri,
@@ -310,6 +312,7 @@ if (config) {
     const ua = new JsSIP.UA(uaOptions);
     config.password = null;
     let currentSession = null;
+    let internalAudioTestSession = null;
     let currentCallPromise = null;
     let callStartedAt = null;
     let callTimer = null;
@@ -897,6 +900,7 @@ if (config) {
     });
     elements.testMicrophoneButton.addEventListener('click', startMicrophoneTest);
     elements.testSpeakerButton.addEventListener('click', testSpeaker);
+    elements.testCallAudioButton.addEventListener('click', () => startInternalAudioTest().catch(() => {}));
     elements.microphoneVolume.addEventListener('input', (event) => {
         microphoneVolume = clampVolume(event.target.value, 200);
         syncMicrophoneControls();
@@ -1294,7 +1298,8 @@ if (config) {
         const reports = await connection.getStats();
         const totals = {
             inboundBytes: 0, outboundBytes: 0, inboundPackets: 0, outboundPackets: 0,
-            hasInbound: false, hasOutbound: false,
+            packetsLost: 0, jitterMilliseconds: 0, hasInbound: false, hasOutbound: false,
+            inboundCodec: '', outboundCodec: '', candidateProtocol: '', candidateType: '',
         };
         reports.forEach((report) => {
             if ((report.kind || report.mediaType) !== 'audio' || report.isRemote) return;
@@ -1302,14 +1307,74 @@ if (config) {
                 totals.hasInbound = true;
                 totals.inboundBytes += Number(report.bytesReceived || 0);
                 totals.inboundPackets += Number(report.packetsReceived || 0);
+                totals.packetsLost += Number(report.packetsLost || 0);
+                totals.jitterMilliseconds = Math.max(totals.jitterMilliseconds, Math.round(Number(report.jitter || 0) * 1000));
+                const codec = report.codecId ? reports.get(report.codecId) : null;
+                totals.inboundCodec ||= String(codec?.mimeType || '').replace(/^audio\//i, '');
             }
             if (report.type === 'outbound-rtp') {
                 totals.hasOutbound = true;
                 totals.outboundBytes += Number(report.bytesSent || 0);
                 totals.outboundPackets += Number(report.packetsSent || 0);
+                const codec = report.codecId ? reports.get(report.codecId) : null;
+                totals.outboundCodec ||= String(codec?.mimeType || '').replace(/^audio\//i, '');
             }
         });
+
+        const transport = [...reports.values()].find((report) => report.type === 'transport' && report.selectedCandidatePairId);
+        const pair = transport?.selectedCandidatePairId ? reports.get(transport.selectedCandidatePairId) : null;
+        const localCandidate = pair?.localCandidateId ? reports.get(pair.localCandidateId) : null;
+        totals.candidateProtocol = String(localCandidate?.protocol || '').toLowerCase();
+        totals.candidateType = String(localCandidate?.candidateType || '').toLowerCase();
         return totals;
+    };
+
+    const mediaDiagnosticPayload = (stats, state) => ({
+        state,
+        webrtc: {
+            inbound_packets: Math.round(stats?.inboundPackets || 0),
+            outbound_packets: Math.round(stats?.outboundPackets || 0),
+            inbound_bytes: Math.round(stats?.inboundBytes || 0),
+            outbound_bytes: Math.round(stats?.outboundBytes || 0),
+            packets_lost: Math.round(stats?.packetsLost || 0),
+            jitter_ms: Math.round(stats?.jitterMilliseconds || 0),
+            inbound_codec: stats?.inboundCodec || '',
+            outbound_codec: stats?.outboundCodec || '',
+            candidate_protocol: stats?.candidateProtocol || '',
+            candidate_type: stats?.candidateType || '',
+        },
+    });
+
+    const renderCallMediaStatus = (stats, state = 'pending') => {
+        if (!elements.callMediaStatus) return;
+        elements.callMediaStatus.classList.remove('healthy', 'degraded');
+        const render = (title, message) => {
+            const heading = document.createElement('strong');
+            const detail = document.createElement('span');
+            heading.textContent = title;
+            detail.textContent = message;
+            elements.callMediaStatus.replaceChildren(heading, detail);
+        };
+        const inbound = Number(stats?.inboundPackets || 0);
+        const outbound = Number(stats?.outboundPackets || 0);
+        const loss = Number(stats?.packetsLost || 0);
+        const jitter = Number(stats?.jitterMilliseconds || 0);
+        if (state === 'pending' || !stats) {
+            render('Mídia da chamada', 'Aguardando uma chamada para medir envio e recebimento de áudio.');
+            return;
+        }
+
+        const healthy = state === 'healthy' && inbound > 0 && outbound > 0;
+        elements.callMediaStatus.classList.add(healthy ? 'healthy' : 'degraded');
+        const candidate = stats.candidateType ? `${stats.candidateType}/${stats.candidateProtocol || 'ICE'}` : 'candidato ICE não identificado';
+        render(healthy ? 'Mídia confirmada' : 'Mídia precisa de atenção', `Recebimento: ${inbound} pacotes · envio: ${outbound} pacotes · perda: ${loss} · jitter: ${jitter} ms · ICE: ${candidate}.`);
+    };
+
+    const persistMediaDiagnostics = async (callPromise, connection, state) => {
+        const call = await callPromise;
+        if (!call?.id) return;
+        const stats = await readWebRtcAudioStats(connection).catch(() => null);
+        await updateCall(call.id, 'answered', null, { media_diagnostics: mediaDiagnosticPayload(stats, state) });
     };
 
     const scheduleActiveMediaCheck = async (session) => {
@@ -1332,6 +1397,8 @@ if (config) {
             }
 
             const current = await readWebRtcAudioStats(session.connection).catch(() => null);
+            const connectionFailed = ['failed', 'closed'].includes(session.connection?.connectionState)
+                || ['failed', 'disconnected'].includes(session.connection?.iceConnectionState);
             if (baseline && current) {
                 if (!microphoneMuted && baseline.hasOutbound && current.hasOutbound
                     && current.outboundBytes <= baseline.outboundBytes && current.outboundPackets <= baseline.outboundPackets) {
@@ -1343,10 +1410,94 @@ if (config) {
                 }
             }
 
+            if (connectionFailed) issues.push('A conexão de mídia WebRTC foi interrompida. Verifique a rede, VPN e o headset antes de tentar novamente.');
+            const mediaState = issues.length ? 'degraded' : 'healthy';
+            renderCallMediaStatus(current, mediaState);
+            persistMediaDiagnostics(currentCallPromise, session.connection, mediaState).catch(() => {});
+
             if (!issues.length || currentSession !== session) return;
             session.__thAudioWarningShown = true;
             await showAudioProblem('Problema no áudio da chamada', issues.join('\n\n'));
-        }, 5000);
+        }, 8000);
+    };
+
+    const isInternalAudioTest = (session) => String(session?.request?.ruri?.user || '') === '*900';
+
+    const finishInternalAudioTest = () => {
+        if (!internalAudioTestSession) return;
+        if (!internalAudioTestSession.isEnded?.()) internalAudioTestSession.terminate();
+        internalAudioTestSession = null;
+        elements.remoteAudio.pause();
+        elements.remoteAudio.srcObject = null;
+        releaseCallMicrophone();
+        elements.testCallAudioButton.disabled = false;
+        elements.testCallAudioButton.textContent = 'Testar conexão PBX';
+    };
+
+    const attachInternalAudioTest = (session) => {
+        internalAudioTestSession = session;
+        const remoteStream = new MediaStream();
+        const addTrack = async (track) => {
+            if (!track || track.kind !== 'audio') return;
+            if (!remoteStream.getAudioTracks().some((item) => item.id === track.id)) remoteStream.addTrack(track);
+            elements.remoteAudio.srcObject = remoteStream;
+            elements.remoteAudio.muted = speakerMuted;
+            elements.remoteAudio.volume = speakerVolume / 100;
+            await applySpeaker();
+            await elements.remoteAudio.play().catch(() => {});
+        };
+        const attachPeer = (peer) => {
+            peer?.addEventListener('track', (event) => {
+                event.streams?.forEach((stream) => stream.getAudioTracks().forEach((track) => addTrack(track).catch(() => {})));
+                addTrack(event.track).catch(() => {});
+            });
+            peer?.getReceivers?.().forEach((receiver) => addTrack(receiver.track).catch(() => {}));
+        };
+        session.on('peerconnection', (event) => attachPeer(event.peerconnection || session.connection));
+        session.on('accepted', async () => {
+            elements.audioConsoleMessage.textContent = 'Teste em andamento: fale por alguns segundos e ouça o retorno do PBX.';
+            window.setTimeout(async () => {
+                if (internalAudioTestSession !== session) return;
+                const stats = await readWebRtcAudioStats(session.connection).catch(() => null);
+                const valid = stats && stats.inboundPackets > 0 && stats.outboundPackets > 0;
+                if (valid) {
+                    renderCallMediaStatus(stats, 'healthy');
+                    setAudioReadiness(true, `Conexão PBX confirmada: ${stats.outboundCodec || 'áudio'} enviado e ${stats.inboundCodec || 'áudio'} recebido via ${stats.candidateType || 'ICE'}.`);
+                    await window.ThconectDialog.alert({ title: 'Áudio da conexão confirmado', message: 'O microfone, a saída de áudio e o caminho WebRTC até o PBX responderam corretamente.', confirmLabel: 'Concluir' });
+                } else {
+                    renderCallMediaStatus(stats, 'degraded');
+                    await showAudioProblem('Falha no teste de conexão PBX', 'O navegador não confirmou áudio nos dois sentidos com o PBX. Verifique rede, VPN, firewall corporativo ou use outra conexão.');
+                }
+                finishInternalAudioTest();
+            }, 8000);
+        });
+        session.on('failed', () => {
+            showAudioProblem('Falha no teste de conexão PBX', 'Não foi possível estabelecer a mídia WebRTC com o PBX. Verifique rede, VPN e as permissões de áudio.').catch(() => {});
+            finishInternalAudioTest();
+        });
+        session.on('ended', () => {
+            if (internalAudioTestSession === session) finishInternalAudioTest();
+        });
+    };
+
+    const startInternalAudioTest = async () => {
+        if (!ua.isRegistered() || currentSession || internalAudioTestSession) return;
+        if (!(await ensureAudioReadyForCall())) return;
+        elements.testCallAudioButton.disabled = true;
+        elements.testCallAudioButton.textContent = 'Conectando…';
+        try {
+            const mediaStream = await prepareCallMicrophone();
+            ua.call(`sip:*900@${config.domain}`, {
+                mediaConstraints: { audio: audioConstraint(), video: false },
+                mediaStream,
+                pcConfig,
+            });
+        } catch (error) {
+            releaseCallMicrophone();
+            elements.testCallAudioButton.disabled = false;
+            elements.testCallAudioButton.textContent = 'Testar conexão PBX';
+            await showAudioProblem('Não foi possível testar a conexão', describeAudioAccessError(error));
+        }
     };
 
     const attachSession = (session, direction) => {
@@ -1401,7 +1552,10 @@ if (config) {
             scheduleActiveMediaCheck(session).catch((error) => console.warn('Falha ao verificar o áudio WebRTC.', error));
             try {
                 const call = await currentCallPromise;
-                if (call?.id) await updateCall(call.id, 'answered');
+                if (call?.id) {
+                    await updateCall(call.id, 'answered');
+                    persistMediaDiagnostics(currentCallPromise, session.connection, 'accepted').catch(() => {});
+                }
                 await startRecording(session);
             } catch (error) {
                 console.warn('Não foi possível iniciar o registro da chamada.', error);
@@ -1479,6 +1633,10 @@ if (config) {
     });
 
     ua.on('newRTCSession', ({ session }) => {
+        if (session.direction === 'outgoing' && isInternalAudioTest(session)) {
+            attachInternalAudioTest(session);
+            return;
+        }
         if (currentSession && currentSession !== session) {
             session.terminate({ status_code: 486, reason_phrase: 'Busy Here' });
             return;
@@ -1957,6 +2115,9 @@ if (supervisionConfig) {
     let showOffline = false;
     let sortKey = 'number';
     let sortDirection = 'asc';
+    const supervisionPcConfig = supervisionConfig.iceServers?.length
+        ? { iceServers: supervisionConfig.iceServers, iceTransportPolicy: 'all' }
+        : undefined;
 
     const socket = new JsSIP.WebSocketInterface(supervisionConfig.websocketUrl);
     const ua = new JsSIP.UA({ uri: supervisionConfig.uri, password: supervisionConfig.password, sockets: [socket], register: true, session_timers: false });
@@ -2112,7 +2273,7 @@ if (supervisionConfig) {
         try {
             const payload = await request(`${supervisionConfig.startUrl}/${agent.id}`, { method: 'POST', body: JSON.stringify({ mode }) });
             activeAuditId = payload.session_id;
-            const session = ua.call(`sip:${payload.dial_number}@${supervisionConfig.domain}`, { mediaConstraints: { audio: true, video: false } });
+            const session = ua.call(`sip:${payload.dial_number}@${supervisionConfig.domain}`, { mediaConstraints: { audio: true, video: false }, pcConfig: supervisionPcConfig });
             activeSession = session; render(); notify(payload.message);
             session.on('peerconnection', () => session.connection?.addEventListener('track', (event) => { if (event.streams[0]) audio.srcObject = event.streams[0]; }));
             const ended = async () => { if (activeSession === session) activeSession = null; audio.srcObject = null; await finishAudit(); render(); };
@@ -2207,7 +2368,7 @@ if (supervisionConfig) {
     };
     const placeSpyCall = (payload) => {
         if (!activeSpy || !ua.isRegistered() || activeSession) return;
-        const session = ua.call(`sip:${payload.dial_number}@${supervisionConfig.domain}`, { mediaConstraints: { audio: true, video: false } });
+        const session = ua.call(`sip:${payload.dial_number}@${supervisionConfig.domain}`, { mediaConstraints: { audio: true, video: false }, pcConfig: supervisionPcConfig });
         activeSession = session;
         activeSpy.state = 'connecting';
         renderSpyConsole(); render();

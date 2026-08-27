@@ -9,11 +9,11 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CallRecord extends Model
 {
-    protected $fillable = ['tenant_id', 'extension_id', 'sip_trunk_id', 'asterisk_uniqueid', 'asterisk_linkedid', 'direction', 'from_number', 'to_number', 'dialed_uri', 'status', 'hangup_cause', 'started_at', 'answered_at', 'ended_at', 'duration_seconds'];
+    protected $fillable = ['tenant_id', 'extension_id', 'sip_trunk_id', 'asterisk_uniqueid', 'asterisk_linkedid', 'direction', 'from_number', 'to_number', 'dialed_uri', 'status', 'hangup_cause', 'media_diagnostics', 'started_at', 'answered_at', 'ended_at', 'duration_seconds'];
 
     protected function casts(): array
     {
-        return ['started_at' => 'datetime', 'answered_at' => 'datetime', 'ended_at' => 'datetime'];
+        return ['started_at' => 'datetime', 'answered_at' => 'datetime', 'ended_at' => 'datetime', 'media_diagnostics' => 'array'];
     }
 
     public function tenant(): BelongsTo

@@ -64,7 +64,7 @@ class PbxConfigGenerator
 
             return $auth
                 ."[{$id}-aor]\ntype=aor\ncontact=sip:{$host}:{$port}\nqualify_frequency=30\nqualify_timeout=3.0\n\n"
-                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\n\n";
+                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\n\n";
         })->implode('');
     }
 
@@ -116,7 +116,12 @@ class PbxConfigGenerator
                 ? "exten => _X.,1,NoOp(Outbound blocked for tenant administrator {$extension->id})\n same => n,Hangup(21)\n"
                 : "exten => _X.,1,NoOp(Extension {$extension->id})\n same => n,Set(__TH_EXTENSION_ID={$extension->id})\n same => n,Set(__TH_TENANT_ID={$extension->tenant_id})\n same => n,Set(SPYGROUP=extension-{$extension->id})\n same => n,Gosub(tenant-{$extension->tenant_id},\${EXTEN},1)\n same => n,Hangup()\n";
 
-            return "[extension-{$extension->id}]\n{$supervision}{$outbound}\n";
+            // Internal WebRTC loopback. It deliberately bypasses the outbound
+            // tenant context, TECH and carrier, so an agent can validate the
+            // complete browser-to-PBX media path without incurring a call.
+            $audioCheck = "exten => *900,1,NoOp(WebRTC audio check for extension {$extension->id})\n same => n,Answer()\n same => n,Playback(beep)\n same => n,Echo()\n same => n,Hangup()\n";
+
+            return "[extension-{$extension->id}]\n{$audioCheck}{$supervision}{$outbound}\n";
         })->implode('');
 
         return $tenantContexts.$extensionContexts;

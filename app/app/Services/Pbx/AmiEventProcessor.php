@@ -20,6 +20,7 @@ class AmiEventProcessor
             'DialBegin' => $this->dialBegin($event),
             'DialEnd' => $this->dialEnd($event),
             'BridgeEnter' => $this->bridgeEnter($event),
+            'RTCPReceived', 'RTCPSent' => $this->rtcp($event),
             'MixMonitorStop' => $this->mixMonitorStop($event),
             'Hangup' => $this->hangup($event),
             default => null,
@@ -28,6 +29,12 @@ class AmiEventProcessor
 
     private function newChannel(array $event): void
     {
+        // *900 is an internal browser-to-PBX media probe. It must neither
+        // create customer history nor interact with a carrier recording.
+        if (($event['Exten'] ?? null) === '*900') {
+            return;
+        }
+
         $extension = $this->extensionFromChannel($event['Channel'] ?? '');
         $uniqueId = $event['Uniqueid'] ?? null;
         if (! $extension || ! $uniqueId) {
@@ -90,6 +97,7 @@ class AmiEventProcessor
             'sip_trunk_id' => $trunk?->id,
             'dialed_uri' => $event['DialString'] ?? $event['DestChannel'] ?? null,
             'status' => 'ringing',
+            'media_diagnostics' => $this->withAsteriskDiagnostic($call, 'dial_begin', ['trunk_id' => $trunk?->id]),
         ]);
     }
 
@@ -97,7 +105,11 @@ class AmiEventProcessor
     {
         $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
         if ($call && ! $call->answered_at) {
-            $call->update(['answered_at' => now(), 'status' => 'answered']);
+            $call->update([
+                'answered_at' => now(),
+                'status' => 'answered',
+                'media_diagnostics' => $this->withAsteriskDiagnostic($call, 'bridge_enter'),
+            ]);
         }
     }
 
@@ -149,6 +161,7 @@ class AmiEventProcessor
             'duration_seconds' => $call->answered_at ? max(0, (int) floor($call->answered_at->diffInSeconds($endedAt))) : 0,
             'status' => $status,
             'hangup_cause' => $event['Cause-txt'] ?? $event['Cause'] ?? null,
+            'media_diagnostics' => $this->withAsteriskDiagnostic($call, 'hangup'),
         ]);
         if ($call->answered_at) {
             $this->finalizeRecording($call, 20);
@@ -163,6 +176,32 @@ class AmiEventProcessor
         if ($call?->answered_at) {
             $this->finalizeRecording($call, 5);
         }
+    }
+
+    private function rtcp(array $event): void
+    {
+        $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
+        if (! $call) {
+            return;
+        }
+
+        $kind = strtolower((string) ($event['Event'] ?? 'rtcp'));
+        $diagnostics = $this->withAsteriskDiagnostic($call, $kind);
+        $diagnostics['asterisk']['rtcp'][$kind] = (int) data_get($diagnostics, "asterisk.rtcp.{$kind}", 0) + 1;
+        $call->update(['media_diagnostics' => $diagnostics]);
+    }
+
+    private function withAsteriskDiagnostic(CallRecord $call, string $event, array $extra = []): array
+    {
+        $diagnostics = $call->media_diagnostics ?? [];
+        $diagnostics['asterisk'] = array_filter([
+            ...((array) ($diagnostics['asterisk'] ?? [])),
+            'last_event' => $event,
+            'last_event_at' => now()->toIso8601String(),
+            ...$extra,
+        ], static fn ($value) => $value !== null);
+
+        return $diagnostics;
     }
 
     private function finalizeRecording(CallRecord $call, int $attempts = 1): void

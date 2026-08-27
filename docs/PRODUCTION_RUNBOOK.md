@@ -91,7 +91,7 @@ Este PBX somente origina chamadas:
 - permitir saída UDP 5060 do Asterisk até o softswitch;
 - não usar `DROP udp --dport 5060` genérico em `DOCKER-USER`, pois ele também bloqueia INVITEs novos que saem do contêiner;
 - limitar bloqueios de scanners ao IP de origem invasor ou à interface pública de entrada;
-- permitir `10000-10100/udp` para RTP.
+- permitir `10000-10299/udp` para RTP.
 
 Verificações:
 
@@ -107,16 +107,56 @@ Regras `DROP` com `-s IP-DO-INVASOR/32` não bloqueiam a saída do PBX. Uma regr
 
 ## RTP e áudio
 
-O Asterisk usa `10000-10100/udp`, `external_media_address=PBX_PUBLIC_IP` e `local_net=PBX_LOCAL_NET`.
+O Asterisk usa `10000-10299/udp`, `external_media_address=PBX_PUBLIC_IP`, `local_net=PBX_LOCAL_NET` e a rede Docker privada declarada em `PBX_DOCKER_LOCAL_NET`.
 
 Se houver sinalização (`100/183/200`) mas nenhum áudio:
 
 1. manter uma chamada atendida por pelo menos 10 segundos;
 2. falar nos dois sentidos;
-3. confirmar que `10000-10100/udp` estão publicados e permitidos no firewall da VPS/provedor;
+3. confirmar que `10000-10299/udp` estão publicados e permitidos no firewall da VPS/provedor;
 4. validar o SDP e o tráfego RTP antes de alterar codecs ou dialplan.
 
 Uma tentativa cancelada durante o toque pode gerar WAV sem áudio e não prova falha de RTP.
+
+### TURN e redes restritivas
+
+O navegador recebe credenciais TURN temporárias por sessão. O segredo de
+`TURN_AUTH_SECRET` fica somente no Easypanel/Coturn e nunca pode aparecer em
+JavaScript, respostas de diagnóstico ou commits. Para ativar o relay:
+
+1. criar `turn.seudominio` em DNS **somente DNS** apontando para a VPS;
+2. configurar `TURN_PUBLIC_HOST`, `TURN_REALM`, `TURN_AUTH_SECRET` e os
+   caminhos do certificado TLS no Easypanel;
+3. disponibilizar o certificado e a chave no volume `turn_certs`, em
+   `/etc/coturn/certs/fullchain.pem` e `/etc/coturn/certs/privkey.pem`, com
+   leitura para o usuário não privilegiado do contêiner (por exemplo, modo
+   `0444` no volume);
+4. liberar TCP/UDP 3478, TCP 5349 e UDP 49160-49359 no firewall da VPS e do
+   provedor; não passar esse host pelo proxy HTTP da Cloudflare;
+5. confirmar no console do navegador que o candidato ICE é `relay` em uma
+   rede restritiva.
+
+O Coturn associa automaticamente o IP público ao IP privado do seu próprio
+contêiner. Não preencha `TURN_INTERNAL_IP` em instalações usuais; use-o apenas
+se a VPS possuir uma topologia Docker fora do padrão e o log do Coturn indicar
+um mapeamento incorreto.
+
+O intervalo RTP do Asterisk é `10000-10299/udp`. Ele atende chamadas,
+supervisão e margem operacional para o perfil inicial de até 50 chamadas
+simultâneas. O Coturn usa faixa separada e não substitui RTP do Asterisk.
+
+O botão **Testar conexão PBX** disca `*900` somente dentro do contexto do
+ramal. Ele usa `Echo()` no Asterisk e não alcança a rota TECH, o softswitch ou
+o destino externo. Falha nesse teste aponta navegador/rede/WebRTC; sucesso
+nele com falha externa aponta a perna trunk/operadora.
+
+### Telemetria sanitizada
+
+Após uma chamada atendida, o sistema registra no próprio histórico apenas
+contadores WebRTC, jitter, perda, codec e tipo/protocolo ICE. Não registra SDP,
+endereços IP, senha, token nem credenciais TURN. Eventos AMI de discagem,
+bridge, RTCP e hangup são associados ao mesmo `Uniqueid`/`Linkedid` para
+separar falha de sinalização de falha de mídia.
 
 ## Gravações
 
