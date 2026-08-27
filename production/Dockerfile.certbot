@@ -1,0 +1,5 @@
+FROM certbot/dns-cloudflare:v5.7.0
+
+COPY --chmod=0755 production/certbot/entrypoint.sh /usr/local/bin/thconect-certbot-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/thconect-certbot-entrypoint"]

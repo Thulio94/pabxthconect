@@ -528,6 +528,30 @@ services:
       timeout: 3s
       retries: 12
 
+  turn-certbot:
+    build:
+      context: ..
+      dockerfile: production/Dockerfile.certbot
+    restart: unless-stopped
+    # Compartilha apenas o namespace de processos do Coturn para recarregar o
+    # certificado com SIGUSR2, sem expor o socket Docker ao contêiner.
+    pid: service:turn
+    environment:
+      CLOUDFLARE_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:?Defina CLOUDFLARE_DNS_API_TOKEN no Easypanel}
+      TURN_CERT_DOMAIN: ${TURN_CERT_DOMAIN:?Defina TURN_CERT_DOMAIN no Easypanel}
+      TURN_CERT_EMAIL: ${TURN_CERT_EMAIL:?Defina TURN_CERT_EMAIL no Easypanel}
+      TURN_CERT_RENEW_INTERVAL_SECONDS: ${TURN_CERT_RENEW_INTERVAL_SECONDS:-43200}
+    volumes:
+      - turn_certs:/etc/letsencrypt
+    depends_on:
+      turn:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /etc/letsencrypt/live/$${TURN_CERT_DOMAIN}/fullchain.pem && test -s /etc/letsencrypt/live/$${TURN_CERT_DOMAIN}/privkey.pem"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres_data:
   redis_data:

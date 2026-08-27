@@ -77,7 +77,8 @@ O Compose cria seis volumes:
 - `app_storage`: storage do Laravel;
 - `pbx_runtime`: ramais, rotas e credencial AMI gerados;
 - `pbx_recordings`: gravações compartilhadas por Laravel e Asterisk.
-- `turn_certs`: certificado e chave privados usados apenas pelo Coturn.
+- `turn_certs`: dados ACME, certificado e chave privados usados pelo Certbot e
+  montados como somente leitura no Coturn.
 
 O segredo AMI permanece com permissão `0600`. Os WAVs do `MixMonitor` devem ser criados com permissão `0644`, pois o Asterisk grava como `root` e o Laravel precisa ler o mesmo volume.
 
@@ -96,7 +97,7 @@ Snapshots da VPS não substituem backup externo.
 
 ## 7. Verificação após o deploy
 
-Confirme nos logs que `app`, `nginx`, `postgres`, `redis`, `asterisk`, `queue`, `scheduler`, `pbx-events` e `turn` estão ativos.
+Confirme nos logs que `app`, `nginx`, `postgres`, `redis`, `asterisk`, `queue`, `scheduler`, `pbx-events`, `turn` e `turn-certbot` estão ativos. Para o TURN TLS, configure no Easypanel `CLOUDFLARE_DNS_API_TOKEN`, `TURN_CERT_DOMAIN` e `TURN_CERT_EMAIL`; o Certbot usa DNS-01, renova a cada 12 horas e pede ao Coturn recarregar o certificado sem socket Docker.
 
 No shell do serviço `app`:
 

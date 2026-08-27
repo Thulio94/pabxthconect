@@ -12,9 +12,11 @@ $localEntrypointPath = Join-Path $repositoryRoot 'docker\asterisk\entrypoint.sh'
 $rtpPath = Join-Path $repositoryRoot 'docker\asterisk\config\rtp.conf'
 $turnFactoryPath = Join-Path $repositoryRoot 'app\app\Services\Pbx\TurnCredentialFactory.php'
 $turnEntrypointPath = Join-Path $repositoryRoot 'production\coturn\entrypoint.sh'
+$certbotEntrypointPath = Join-Path $repositoryRoot 'production\certbot\entrypoint.sh'
+$certbotDockerfilePath = Join-Path $repositoryRoot 'production\Dockerfile.certbot'
 $testPath = Join-Path $repositoryRoot 'app\tests\Feature\PbxProvisioningTest.php'
 
-$requiredFiles = @($generatorPath, $browserPath, $productionComposePath, $productionEntrypointPath, $localEntrypointPath, $rtpPath, $turnFactoryPath, $turnEntrypointPath, $testPath)
+$requiredFiles = @($generatorPath, $browserPath, $productionComposePath, $productionEntrypointPath, $localEntrypointPath, $rtpPath, $turnFactoryPath, $turnEntrypointPath, $certbotEntrypointPath, $certbotDockerfilePath, $testPath)
 foreach ($file in $requiredFiles) {
     if (-not (Test-Path -LiteralPath $file)) {
         throw "Arquivo crítico ausente: $file"
@@ -29,6 +31,8 @@ $localEntrypoint = Get-Content -Raw -LiteralPath $localEntrypointPath
 $rtp = Get-Content -Raw -LiteralPath $rtpPath
 $turnFactory = Get-Content -Raw -LiteralPath $turnFactoryPath
 $turnEntrypoint = Get-Content -Raw -LiteralPath $turnEntrypointPath
+$certbotEntrypoint = Get-Content -Raw -LiteralPath $certbotEntrypointPath
+$certbotDockerfile = Get-Content -Raw -LiteralPath $certbotDockerfilePath
 $tests = Get-Content -Raw -LiteralPath $testPath
 
 $checks = [ordered]@{
@@ -51,6 +55,8 @@ $checks = [ordered]@{
     'WAV permanece legivel pelo Laravel localmente' = $localEntrypoint.Contains('umask 022')
     'Listener AMI permanece implantado' = $compose.Contains('pbx-events:')
     'Coturn permanece implantado' = $compose.Contains('turn:') -and $compose.Contains('49160-49359:49160-49359/udp')
+    'Certificado TURN usa desafio DNS restrito' = $compose.Contains('turn-certbot:') -and $compose.Contains('CLOUDFLARE_DNS_API_TOKEN') -and $certbotDockerfile.Contains('certbot/dns-cloudflare') -and $certbotEntrypoint.Contains('--dns-cloudflare')
+    'Renovação TURN não usa socket Docker' = -not $compose.Contains('/var/run/docker.sock') -and $compose.Contains('pid: service:turn') -and $certbotEntrypoint.Contains('kill -USR2 1')
     'Teste protege TECH e E.164' = $tests.Contains('Dial(PJSIP/8033${TH_DEST}@trunk-')
 }
 
