@@ -36,6 +36,10 @@ issue_or_renew() {
 
   # Coturn executes as nobody:nogroup. The private key stays confined to this
   # named volume and is readable only by that service account.
+  chown root:65534 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive
+  chmod 0750 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive
+  chown root:65534 "$certificate_dir" "$archive_dir"
+  chmod 0750 "$certificate_dir" "$archive_dir"
   find "$archive_dir" -type f -exec chown 65534:65534 {} \; -exec chmod 0640 {} \;
   test -s "$certificate_dir/fullchain.pem"
   test -s "$certificate_dir/privkey.pem"

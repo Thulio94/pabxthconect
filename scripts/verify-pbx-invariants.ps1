@@ -57,6 +57,7 @@ $checks = [ordered]@{
     'Coturn permanece implantado' = $compose.Contains('turn:') -and $compose.Contains('49160-49359:49160-49359/udp')
     'Certificado TURN usa desafio DNS restrito' = $compose.Contains('turn-certbot:') -and $compose.Contains('CLOUDFLARE_DNS_API_TOKEN') -and $certbotDockerfile.Contains('certbot/dns-cloudflare') -and $certbotEntrypoint.Contains('--dns-cloudflare')
     'Renovação TURN não usa socket Docker' = -not $compose.Contains('/var/run/docker.sock') -and $compose.Contains('pid: service:turn') -and $certbotEntrypoint.Contains('kill -USR2 1')
+    'Chave TURN permanece legível somente pelo Coturn' = $certbotEntrypoint.Contains('chmod 0750') -and $certbotEntrypoint.Contains('chmod 0640') -and $certbotEntrypoint.Contains('chown root:65534')
     'Teste protege TECH e E.164' = $tests.Contains('Dial(PJSIP/8033${TH_DEST}@trunk-')
 }
 
