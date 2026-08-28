@@ -527,8 +527,13 @@ if (config) {
         if (message) elements.audioConsoleMessage.textContent = message;
     };
 
-    const showAudioProblem = async (title, message) => {
-        setAudioReadiness(false, message);
+    const showAudioProblem = async (title, message, { affectReadiness = true } = {}) => {
+        // Device readiness (permission, headset and microphone availability) is
+        // independent from the media observed in one call. A transient lack of
+        // RTP must never mark a working headset as unavailable or prevent the
+        // next call from being placed.
+        if (affectReadiness) setAudioReadiness(false, message);
+        else elements.audioConsoleMessage.textContent = message;
         audioConsoleCollapsed = false;
         syncAudioConsoleVisibility();
         saveAudioPreferences();
@@ -586,16 +591,13 @@ if (config) {
     const prepareCallMicrophone = async () => {
         releaseCallMicrophone();
         callMicrophoneStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint(), video: false });
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        callMicrophoneContext = new AudioContextClass();
-        await callMicrophoneContext.resume();
-        const source = callMicrophoneContext.createMediaStreamSource(callMicrophoneStream);
-        callMicrophoneGain = callMicrophoneContext.createGain();
-        const destination = callMicrophoneContext.createMediaStreamDestination();
-        source.connect(callMicrophoneGain).connect(destination);
-        syncMicrophoneControls();
-
-        return destination.stream;
+        // Send the browser's native track to WebRTC. Routing call audio through
+        // an AudioContext destination created a second media pipeline and has
+        // proved unreliable with some USB/Bluetooth headsets. The native track
+        // preserves browser echo cancellation and is the most interoperable
+        // path to Asterisk. Mute is still applied by JsSIP to this same track.
+        callMicrophoneGain = null;
+        return callMicrophoneStream;
     };
 
     const fillDeviceSelect = (select, devices, selectedId, fallbackLabel) => {
@@ -1300,6 +1302,7 @@ if (config) {
             inboundBytes: 0, outboundBytes: 0, inboundPackets: 0, outboundPackets: 0,
             packetsLost: 0, jitterMilliseconds: 0, hasInbound: false, hasOutbound: false,
             inboundCodec: '', outboundCodec: '', candidateProtocol: '', candidateType: '',
+            selectedPair: false, microphoneEnergy: 0,
         };
         reports.forEach((report) => {
             if ((report.kind || report.mediaType) !== 'audio' || report.isRemote) return;
@@ -1319,11 +1322,15 @@ if (config) {
                 const codec = report.codecId ? reports.get(report.codecId) : null;
                 totals.outboundCodec ||= String(codec?.mimeType || '').replace(/^audio\//i, '');
             }
+            if (report.type === 'media-source' && report.kind === 'audio') {
+                totals.microphoneEnergy += Number(report.totalAudioEnergy || 0);
+            }
         });
 
         const transport = [...reports.values()].find((report) => report.type === 'transport' && report.selectedCandidatePairId);
         const pair = transport?.selectedCandidatePairId ? reports.get(transport.selectedCandidatePairId) : null;
         const localCandidate = pair?.localCandidateId ? reports.get(pair.localCandidateId) : null;
+        totals.selectedPair = Boolean(pair && (pair.state === 'succeeded' || pair.nominated));
         totals.candidateProtocol = String(localCandidate?.protocol || '').toLowerCase();
         totals.candidateType = String(localCandidate?.candidateType || '').toLowerCase();
         return totals;
@@ -1379,46 +1386,66 @@ if (config) {
 
     const scheduleActiveMediaCheck = async (session) => {
         clearTimeout(activeMediaCheckTimer);
-        const baseline = await readWebRtcAudioStats(session.connection).catch(() => null);
+        // Wait until ICE is actually connected and give the remote peer time to
+        // attach its track. The old eight-second, single-sample check treated
+        // normal call setup and silence as a defective headset.
         activeMediaCheckTimer = window.setTimeout(async () => {
             if (currentSession !== session || session.__thAudioWarningShown) return;
             if (elements.holdButton.getAttribute('aria-pressed') === 'true') return;
-            const issues = [];
-            const senderTrack = session.connection?.getSenders?.()
-                ?.map((sender) => sender.track)
-                .find((track) => track?.kind === 'audio');
-            if (!microphoneMuted && (!senderTrack || senderTrack.readyState !== 'live' || !senderTrack.enabled)) {
-                issues.push('O microfone não possui uma faixa ativa sendo enviada. Verifique o mudo do sistema e o headset.');
+            const baseline = await readWebRtcAudioStats(session.connection).catch(() => null);
+            const connection = session.connection;
+            const connectionFailed = ['failed', 'closed'].includes(connection?.connectionState)
+                || ['failed', 'disconnected'].includes(connection?.iceConnectionState);
+            if (connectionFailed) {
+                session.__thAudioWarningShown = true;
+                renderCallMediaStatus(baseline, 'degraded');
+                await showAudioProblem('Conexão de áudio interrompida', 'A conexão de mídia WebRTC foi interrompida. Verifique a rede, VPN ou firewall e faça uma nova chamada.', { affectReadiness: false });
+                return;
             }
 
-            const playbackStarted = await recoverRemoteAudio(session);
-            if (!speakerMuted && (!playbackStarted || elements.remoteAudio.muted || elements.remoteAudio.volume <= 0)) {
-                issues.push('A reprodução da outra pessoa não iniciou na saída selecionada. Verifique o volume e a saída do navegador.');
+            if (!baseline?.selectedPair) {
+                renderCallMediaStatus(baseline, 'degraded');
+                elements.audioConsoleMessage.textContent = 'A chamada ainda está negociando a conexão de mídia. O microfone continua disponível.';
+                return;
             }
 
-            const current = await readWebRtcAudioStats(session.connection).catch(() => null);
-            const connectionFailed = ['failed', 'closed'].includes(session.connection?.connectionState)
-                || ['failed', 'disconnected'].includes(session.connection?.iceConnectionState);
-            if (baseline && current) {
-                if (!microphoneMuted && baseline.hasOutbound && current.hasOutbound
-                    && current.outboundBytes <= baseline.outboundBytes && current.outboundPackets <= baseline.outboundPackets) {
-                    issues.push('Nenhum pacote de voz saiu do navegador após a chamada ser atendida.');
+            activeMediaCheckTimer = window.setTimeout(async () => {
+                if (currentSession !== session || session.__thAudioWarningShown) return;
+                const issues = [];
+                const senderTrack = connection?.getSenders?.()
+                    ?.map((sender) => sender.track)
+                    .find((track) => track?.kind === 'audio');
+                if (!microphoneMuted && (!senderTrack || senderTrack.readyState !== 'live' || !senderTrack.enabled)) {
+                    issues.push('O microfone não possui uma faixa ativa sendo enviada. Verifique o mudo do sistema e o headset.');
                 }
-                if (!speakerMuted && baseline.hasInbound && current.hasInbound
-                    && current.inboundBytes <= baseline.inboundBytes && current.inboundPackets <= baseline.inboundPackets) {
-                    issues.push('Nenhum áudio chegou do servidor para esta chamada.');
+
+                await recoverRemoteAudio(session);
+
+                const current = await readWebRtcAudioStats(connection).catch(() => null);
+                const stillFailed = ['failed', 'closed'].includes(connection?.connectionState)
+                    || ['failed', 'disconnected'].includes(connection?.iceConnectionState);
+                if (stillFailed) issues.push('A conexão de mídia WebRTC foi interrompida. Verifique a rede, VPN e o headset antes de tentar novamente.');
+
+                // A lack of packet growth alone does not prove an audio fault:
+                // users may be silent or the far end may not have spoken yet.
+                // Alert only when the microphone demonstrably has energy but the
+                // browser cannot send RTP through an established ICE pair.
+                const microphoneIsActive = baseline && current
+                    && current.microphoneEnergy > baseline.microphoneEnergy + 0.001;
+                if (!microphoneMuted && microphoneIsActive && current.hasOutbound
+                    && current.outboundBytes <= baseline.outboundBytes) {
+                    issues.push('O microfone captou voz, mas o navegador não enviou áudio para a chamada. Verifique a rede, VPN ou firewall.');
                 }
-            }
 
-            if (connectionFailed) issues.push('A conexão de mídia WebRTC foi interrompida. Verifique a rede, VPN e o headset antes de tentar novamente.');
-            const mediaState = issues.length ? 'degraded' : 'healthy';
-            renderCallMediaStatus(current, mediaState);
-            persistMediaDiagnostics(currentCallPromise, session.connection, mediaState).catch(() => {});
+                const mediaState = issues.length ? 'degraded' : 'healthy';
+                renderCallMediaStatus(current, mediaState);
+                persistMediaDiagnostics(currentCallPromise, connection, mediaState).catch(() => {});
 
-            if (!issues.length || currentSession !== session) return;
-            session.__thAudioWarningShown = true;
-            await showAudioProblem('Problema no áudio da chamada', issues.join('\n\n'));
-        }, 8000);
+                if (!issues.length || currentSession !== session) return;
+                session.__thAudioWarningShown = true;
+                await showAudioProblem('Problema confirmado no áudio da chamada', issues.join('\n\n'), { affectReadiness: false });
+            }, 10000);
+        }, 12000);
     };
 
     const isInternalAudioTest = (session) => String(session?.request?.ruri?.user || '') === '*900';

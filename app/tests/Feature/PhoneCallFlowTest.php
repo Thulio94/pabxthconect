@@ -34,7 +34,9 @@ class PhoneCallFlowTest extends TestCase
         $this->assertStringContainsString('readWebRtcAudioStats', $javascript);
         $this->assertStringContainsString('mediaDiagnosticPayload', $javascript);
         $this->assertStringContainsString('startInternalAudioTest', $javascript);
-        $this->assertStringContainsString("showAudioProblem('Problema no áudio da chamada'", $javascript);
+        $this->assertStringContainsString("showAudioProblem('Problema confirmado no áudio da chamada'", $javascript);
+        $this->assertStringContainsString('microphoneEnergy', $javascript);
+        $this->assertStringContainsString('return callMicrophoneStream;', $javascript);
     }
 
     public function test_dashboard_shows_the_twenty_five_latest_real_pbx_calls(): void

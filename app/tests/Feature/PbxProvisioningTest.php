@@ -56,6 +56,7 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString("[{$firstExtension->sip_username}]", $endpoints);
         $this->assertStringContainsString('identify_by=username,auth_username', $endpoints);
         $this->assertStringContainsString('rtp_symmetric=yes', $endpoints);
+        $this->assertStringContainsString('rtp_keepalive=20', $endpoints);
         $this->assertStringContainsString('Set(TH_DEST=${FILTER(0-9,${EXTEN})})', $dialplan);
         $this->assertStringContainsString('Set(TH_DEST=55${TH_DEST})', $dialplan);
         $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,g)', $dialplan);
@@ -83,6 +84,7 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString('force_rport=yes', $trunks);
         $this->assertStringContainsString('rewrite_contact=yes', $trunks);
         $this->assertStringContainsString('rtp_symmetric=yes', $trunks);
+        $this->assertStringContainsString('rtp_keepalive=20', $trunks);
 
     }
 }

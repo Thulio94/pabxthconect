@@ -40,7 +40,7 @@ class PbxConfigGenerator
 
             return "[{$id}-auth]\ntype=auth\nauth_type=userpass\nusername={$username}\npassword={$secret}\n\n"
                 ."[{$id}]\ntype=aor\nmax_contacts=1\nremove_existing=yes\n\n"
-                ."[{$id}]\ntype=endpoint\ntransport=transport-ws\ncontext=extension-{$extension->id}\naors={$id}\nauth={$id}-auth\nidentify_by=username,auth_username\nset_var=SPYGROUP=extension-{$extension->id}\ndisallow=all\nallow=ulaw,alaw\nwebrtc=yes\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nice_support=yes\nmedia_encryption=dtls\ndtls_auto_generate_cert=yes\n\n";
+                ."[{$id}]\ntype=endpoint\ntransport=transport-ws\ncontext=extension-{$extension->id}\naors={$id}\nauth={$id}-auth\nidentify_by=username,auth_username\nset_var=SPYGROUP=extension-{$extension->id}\ndisallow=all\nallow=ulaw,alaw\nwebrtc=yes\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nrtp_keepalive=20\nice_support=yes\nmedia_encryption=dtls\ndtls_auto_generate_cert=yes\n\n";
 
         })->implode('');
     }
@@ -64,7 +64,7 @@ class PbxConfigGenerator
 
             return $auth
                 ."[{$id}-aor]\ntype=aor\ncontact=sip:{$host}:{$port}\nqualify_frequency=30\nqualify_timeout=3.0\n\n"
-                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\n\n";
+                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nrtp_keepalive=20\n\n";
         })->implode('');
     }
 
