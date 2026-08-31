@@ -98,9 +98,11 @@ class PbxConfigGenerator
                 ." same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=11]?Set(TH_DEST=55\${TH_DEST}))\n"
                 .$recording.$routes
                 .($tenant->record_calls
-                    ? " same => n,StopMixMonitor()\n same => n,System(rm -f \"\${RECORDING_ROOT}/\${CALL_RECORDING_FILE}\")\n"
-                    : '')
-                ." same => n(done),Return()\n\n";
+                    // Keep the Asterisk mixed WAV after an answered call. The
+                    // browser recording is only a legacy fallback and must
+                    // never replace or race the server-side MixMonitor file.
+                    ? " same => n(done),StopMixMonitor()\n same => n,GotoIf(\$[\"\${DIALSTATUS}\"=\"ANSWER\"]?keep-recording)\n same => n,System(rm -f \"\${RECORDING_ROOT}/\${CALL_RECORDING_FILE}\")\n same => n(keep-recording),Return()\n\n"
+                    : " same => n(done),Return()\n\n");
         })->implode('');
         $allExtensions = $tenants->flatMap(fn (Tenant $tenant) => $tenant->extensions);
         $extensionContexts = $allExtensions->map(function (Extension $extension) use ($allExtensions) {

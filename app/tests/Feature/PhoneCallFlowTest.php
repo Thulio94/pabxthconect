@@ -17,7 +17,7 @@ class PhoneCallFlowTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_dashboard_requires_audio_readiness_and_keeps_active_webrtc_diagnostics(): void
+    public function test_dashboard_uses_native_call_audio_without_console_or_browser_recording(): void
     {
         [$tenant, $extension] = $this->extension();
 
@@ -25,18 +25,15 @@ class PhoneCallFlowTest extends TestCase
             ->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
             ->get('/telefone')
             ->assertOk()
-            ->assertSee('id="testMicrophoneButton"', false)
-            ->assertSee('id="testCallAudioButton"', false)
-            ->assertSee('Testar microfone');
+            ->assertDontSee('id="audioConsole"', false)
+            ->assertDontSee('id="testMicrophoneButton"', false)
+            ->assertSee('id="remoteAudio"', false);
 
         $javascript = File::get(resource_path('js/app.js'));
         $this->assertStringContainsString('ensureAudioReadyForCall()', $javascript);
-        $this->assertStringContainsString('readWebRtcAudioStats', $javascript);
-        $this->assertStringContainsString('mediaDiagnosticPayload', $javascript);
-        $this->assertStringContainsString('startInternalAudioTest', $javascript);
-        $this->assertStringContainsString("showAudioProblem('Problema confirmado no áudio da chamada'", $javascript);
-        $this->assertStringContainsString('microphoneEnergy', $javascript);
         $this->assertStringContainsString('return callMicrophoneStream;', $javascript);
+        $this->assertStringContainsString('Asterisk MixMonitor', $javascript);
+        $this->assertStringNotContainsString('await startRecording(session);', $javascript);
     }
 
     public function test_dashboard_shows_the_twenty_five_latest_real_pbx_calls(): void
@@ -71,9 +68,8 @@ class PhoneCallFlowTest extends TestCase
             ->get("/telefone/historico/{$call->id}/gravacao")->assertNotFound();
     }
 
-    public function test_webphone_persists_call_history_and_browser_recording_when_ami_is_unavailable(): void
+    public function test_webphone_keeps_history_but_rejects_one_sided_browser_recording_uploads(): void
     {
-        Storage::fake('pbx_recordings');
         [$tenant, $extension] = $this->extension();
         $session = ['sip_agent' => $this->agentSession($tenant, $extension)];
 
@@ -86,13 +82,12 @@ class PhoneCallFlowTest extends TestCase
             ->patchJson("/telefone/chamadas/{$callId}", ['status' => 'answered'])->assertOk();
         $this->actingAs($extension->user)->withSession($session)
             ->post("/telefone/chamadas/{$callId}/gravacao", ['recording' => UploadedFile::fake()->createWithContent('chamada.webm', 'audio-do-navegador')])
-            ->assertOk()->assertJsonPath('has_recording', true);
+            ->assertGone();
         $this->actingAs($extension->user)->withSession($session)
             ->patchJson("/telefone/chamadas/{$callId}", ['status' => 'completed', 'duration_seconds' => 12])->assertOk();
 
         $this->assertDatabaseHas('call_records', ['id' => $callId, 'extension_id' => $extension->id, 'status' => 'completed']);
-        $this->assertDatabaseHas('recordings', ['call_record_id' => $callId]);
-        $this->actingAs($extension->user)->withSession($session)->get('/telefone/historico/'.$callId.'/gravacao')->assertOk();
+        $this->assertDatabaseMissing('recordings', ['call_record_id' => $callId]);
     }
 
     public function test_browser_reuses_asterisk_call_created_first_with_e164_number(): void
@@ -111,7 +106,7 @@ class PhoneCallFlowTest extends TestCase
         ])->assertCreated()->assertJsonPath('id', $call->id);
 
         $this->assertDatabaseCount('call_records', 1);
-        $this->assertDatabaseCount('recordings', 1);
+        $this->assertDatabaseCount('recordings', 0);
     }
 
     public function test_agent_can_persist_sanitized_webrtc_media_diagnostics(): void

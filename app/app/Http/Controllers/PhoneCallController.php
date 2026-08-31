@@ -4,13 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\CallRecord;
 use App\Models\Extension;
-use App\Models\Recording;
 use App\Services\OperatorActivityRecorder;
 use App\Services\Pbx\CallRecordMatcher;
 use App\Support\CallOutcome;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -37,17 +35,6 @@ class PhoneCallController extends Controller
             'status' => $data['direction'] === 'incoming' ? 'ringing' : 'dialing',
             'started_at' => now(),
         ]);
-
-        if ($extension->tenant->record_calls) {
-            $deleteAfter = $extension->tenant->recording_retention_days
-                ? now()->addDays($extension->tenant->recording_retention_days) : null;
-            Recording::firstOrCreate(['call_record_id' => $call->id], [
-                'call_record_id' => $call->id,
-                'storage_disk' => 'pbx_recordings',
-                'path' => "tenant-{$extension->tenant_id}/browser-{$call->id}.webm",
-                'delete_after' => $deleteAfter,
-            ]);
-        }
 
         $activity->log($extension, $request->user(), 'call_started', 'Iniciou uma chamada.', ['direction' => $data['direction'], 'number' => $number, 'call_record_id' => $call->id]);
 
@@ -102,28 +89,14 @@ class PhoneCallController extends Controller
 
     public function uploadRecording(Request $request, CallRecord $callRecord): JsonResponse
     {
+        // The Asterisk MixMonitor WAV is the authoritative two-way recording.
+        // Accepting browser WebM uploads here allowed a one-sided local capture
+        // to overwrite it, so legacy clients are deliberately rejected.
         $this->authorizeSession($request, $callRecord);
-        abort_unless($callRecord->tenant()->value('record_calls'), 403);
-        abort_unless($callRecord->answered_at, 422, 'Esta chamada não foi atendida e não possui áudio válido.');
-        $request->validate(['recording' => ['required', 'file', 'max:51200', 'mimetypes:audio/webm,audio/ogg,audio/mp4,video/webm,application/octet-stream']]);
 
-        $file = $request->file('recording');
-        $extension = match ($file->getMimeType()) {
-            'audio/ogg' => 'ogg', 'audio/mp4' => 'm4a', default => 'webm',
-        };
-        $recording = $callRecord->recording ?? new Recording(['call_record_id' => $callRecord->id]);
-        $path = "tenant-{$callRecord->tenant_id}/browser-{$callRecord->id}.{$extension}";
-        Storage::disk('pbx_recordings')->put($path, $file->getContent());
-        $recording->fill([
-            'storage_disk' => 'pbx_recordings', 'path' => $path, 'mime_type' => $file->getMimeType(),
-            'size_bytes' => $file->getSize(), 'available_at' => now(), 'deleted_at' => null,
-        ]);
-        if (! $recording->delete_after && $callRecord->tenant?->recording_retention_days) {
-            $recording->delete_after = now()->addDays($callRecord->tenant->recording_retention_days);
-        }
-        $recording->save();
-
-        return response()->json($this->payload($callRecord->fresh('recording')));
+        return response()->json([
+            'message' => 'A gravação é gerada pelo PBX após a chamada ser encerrada.',
+        ], 410);
     }
 
     private function extensionFromSession(array $agent): Extension

@@ -47,58 +47,6 @@
                 </div>
             </section>
 
-            <aside class="panel audio-console" id="audioConsole">
-                    <div class="audio-console-head">
-                        <div><p class="eyebrow">CONSOLE DE ÁUDIO</p><h2>Dispositivos da chamada</h2></div>
-                        <div class="audio-console-tools"><span class="audio-permission pending" id="audioPermission">Verificando</span><button class="audio-console-toggle" id="audioConsoleToggle" type="button" aria-expanded="true">Ocultar</button></div>
-                    </div>
-
-                    <div class="audio-channel input-channel">
-                        <div class="audio-channel-icon" aria-hidden="true">MIC</div>
-                        <div class="audio-channel-body">
-                            <label for="microphoneSelect">Entrada — microfone</label>
-                            <select id="microphoneSelect" disabled><option>Dispositivo padrão</option></select>
-                            <div class="audio-level-row">
-                                <span id="microphoneState">Aguardando permissão</span>
-                                <div class="audio-meter" role="meter" aria-label="Nível do microfone" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="microphoneLevel"></i></div>
-                            </div>
-                            <div class="audio-control-row">
-                                <label class="volume-label" for="microphoneVolume"><span>Volume do microfone</span><output id="microphoneVolumeValue" for="microphoneVolume">100%</output></label>
-                                <input class="volume-slider" id="microphoneVolume" type="range" min="0" max="200" value="100" aria-label="Volume do microfone">
-                                <button class="audio-mute-button" id="microphoneMuteButton" type="button" aria-pressed="false">Microfone ligado</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="audio-channel output-channel">
-                        <div class="audio-channel-icon" aria-hidden="true">OUT</div>
-                        <div class="audio-channel-body">
-                            <label for="speakerSelect">Saída — áudio da chamada</label>
-                            <select id="speakerSelect" disabled><option>Saída padrão do navegador</option></select>
-                            <span class="audio-device-note" id="speakerState">Será usado para ouvir a chamada</span>
-                            <div class="audio-control-row">
-                                <label class="volume-label" for="speakerVolume"><span>Volume do áudio</span><output id="speakerVolumeValue" for="speakerVolume">100%</output></label>
-                                <input class="volume-slider" id="speakerVolume" type="range" min="0" max="100" value="100" aria-label="Volume do áudio de saída">
-                                <button class="audio-mute-button" id="speakerMuteButton" type="button" aria-pressed="false">Áudio ligado</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="audio-test-guide">
-                        <p><strong>Teste do microfone:</strong> fale normalmente; você verá o medidor e ouvirá sua voz por 10 segundos na saída selecionada.</p>
-                        <p><strong>Teste de áudio:</strong> reproduz um bip na saída selecionada.</p>
-                        <p><strong>Teste de conexão:</strong> cria uma chamada interna de eco com o PBX; não usa a rota ou gera cobrança.</p>
-                    </div>
-                    <div class="audio-console-actions">
-                        <button class="button button-primary" id="testMicrophoneButton" type="button">Testar microfone</button>
-                        <button class="button button-soft" id="testSpeakerButton" type="button">Testar áudio de saída</button>
-                        <button class="button audio-check-button" id="testCallAudioButton" type="button">Testar conexão PBX</button>
-                    </div>
-                    <div class="call-media-status" id="callMediaStatus" aria-live="polite">
-                        <strong>Mídia da chamada</strong><span>Aguardando uma chamada para medir envio e recebimento de áudio.</span>
-                    </div>
-                    <p class="audio-console-message" id="audioConsoleMessage" aria-live="polite">Use um fone para o retorno do microfone e evitar microfonia.</p>
-            </aside>
         </div>
 
         <section class="panel appointment-panel" id="appointments">

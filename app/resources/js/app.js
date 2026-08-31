@@ -260,26 +260,6 @@ if (config) {
         historyLoader: document.querySelector('#historyLoader'),
         recordingIndicator: document.querySelector('#recordingIndicator'),
         remoteAudio: document.querySelector('#remoteAudio'),
-        audioConsole: document.querySelector('#audioConsole'),
-        audioConsoleToggle: document.querySelector('#audioConsoleToggle'),
-        audioPermission: document.querySelector('#audioPermission'),
-        microphoneSelect: document.querySelector('#microphoneSelect'),
-        speakerSelect: document.querySelector('#speakerSelect'),
-        microphoneState: document.querySelector('#microphoneState'),
-        speakerState: document.querySelector('#speakerState'),
-        microphoneLevel: document.querySelector('#microphoneLevel'),
-        audioMeter: document.querySelector('.audio-meter'),
-        audioConsoleMessage: document.querySelector('#audioConsoleMessage'),
-        callMediaStatus: document.querySelector('#callMediaStatus'),
-        testMicrophoneButton: document.querySelector('#testMicrophoneButton'),
-        testSpeakerButton: document.querySelector('#testSpeakerButton'),
-        testCallAudioButton: document.querySelector('#testCallAudioButton'),
-        microphoneVolume: document.querySelector('#microphoneVolume'),
-        microphoneVolumeValue: document.querySelector('#microphoneVolumeValue'),
-        microphoneMuteButton: document.querySelector('#microphoneMuteButton'),
-        speakerVolume: document.querySelector('#speakerVolume'),
-        speakerVolumeValue: document.querySelector('#speakerVolumeValue'),
-        speakerMuteButton: document.querySelector('#speakerMuteButton'),
         appointmentForm: document.querySelector('#appointmentForm'),
         appointmentName: document.querySelector('#appointmentName'),
         appointmentPhone: document.querySelector('#appointmentPhone'),
@@ -312,47 +292,19 @@ if (config) {
     const ua = new JsSIP.UA(uaOptions);
     config.password = null;
     let currentSession = null;
-    let internalAudioTestSession = null;
     let currentCallPromise = null;
     let callStartedAt = null;
     let callTimer = null;
     let lineStateStartedAt = new Date();
     let lineStateTimer = null;
     let callFinished = false;
-    let mediaRecorder = null;
-    let recordingContext = null;
-    let recordingChunks = [];
     let failureResetTimer = null;
-    let microphoneTestStream = null;
-    let microphoneTestContext = null;
-    let microphonePreviewAudio = null;
-    let microphoneTestGain = null;
-    let microphoneMeterFrame = null;
-    let microphoneTestTimer = null;
     let callMicrophoneStream = null;
-    let callMicrophoneContext = null;
-    let callMicrophoneGain = null;
     let outgoingDial = null;
     let callSignalGeneration = 0;
     let callSignalTimer = null;
-    let activeMediaCheckTimer = null;
-    let audioDeviceChangeTimer = null;
-    let audioDeviceChangeInitialized = false;
     const callSignalContexts = new Set();
-    const audioPreferenceKey = `thconect-phone:audio:${config.uri}`;
-    let savedAudioPreferences = {};
-    try {
-        savedAudioPreferences = JSON.parse(localStorage.getItem(audioPreferenceKey) || '{}');
-    } catch {
-        localStorage.removeItem(audioPreferenceKey);
-    }
-    let selectedMicrophoneId = savedAudioPreferences.microphoneId || '';
-    let selectedSpeakerId = savedAudioPreferences.speakerId || '';
-    let microphoneVolume = Number(savedAudioPreferences.microphoneVolume ?? 100);
-    let speakerVolume = Number(savedAudioPreferences.speakerVolume ?? 100);
-    let microphoneMuted = Boolean(savedAudioPreferences.microphoneMuted);
-    let speakerMuted = Boolean(savedAudioPreferences.speakerMuted);
-    let audioConsoleCollapsed = Boolean(savedAudioPreferences.audioConsoleCollapsed);
+    let microphoneMuted = false;
     let historyTotal = document.querySelectorAll('#historyBody tr:not(.history-empty)').length;
     const historyFilters = config.historyFilters || {};
     let historyNextCursor = config.historyNextCursor || null;
@@ -379,7 +331,7 @@ if (config) {
     };
 
     const playSignalTone = async (frequency, duration = 220, volume = 0.16, generation = callSignalGeneration) => {
-        if (speakerMuted || speakerVolume <= 0 || generation !== callSignalGeneration) return;
+        if (generation !== callSignalGeneration) return;
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (!AudioContextClass) return;
 
@@ -399,11 +351,10 @@ if (config) {
         gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration / 1000);
         oscillator.connect(gain).connect(destination);
         audio.srcObject = destination.stream;
-        audio.volume = speakerVolume / 100;
-        audio.muted = speakerMuted;
+        audio.volume = 1;
+        audio.muted = false;
 
         try {
-            if (typeof audio.setSinkId === 'function') await audio.setSinkId(selectedSpeakerId || 'default');
             await context.resume();
             await audio.play();
             oscillator.start();
@@ -490,6 +441,10 @@ if (config) {
         }
     };
 
+    /* O console de dispositivos antigo criava fluxos de áudio adicionais, prévias
+       e gravações locais. Ele fica desativado para que cada chamada use somente
+       a trilha nativa do navegador e o áudio remoto padrão do sistema. */
+    if (false) {
     const setAudioPermission = (state) => {
         const labels = { granted: 'Permitido', denied: 'Bloqueado', prompt: 'Permissão pendente' };
         elements.audioPermission.textContent = labels[state] || 'Verificando';
@@ -921,6 +876,64 @@ if (config) {
         saveAudioPreferences();
     });
 
+    }
+
+    const audioConstraint = () => ({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+    });
+
+    const releaseCallMicrophone = () => {
+        callMicrophoneStream?.getTracks().forEach((track) => track.stop());
+        callMicrophoneStream = null;
+    };
+
+    const prepareCallMicrophone = async () => {
+        releaseCallMicrophone();
+        callMicrophoneStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint(), video: false });
+        return callMicrophoneStream;
+    };
+
+    const describeAudioAccessError = (error) => {
+        const name = String(error?.name || '');
+        if (name === 'NotAllowedError' || name === 'SecurityError') return 'O navegador bloqueou o microfone. Permita o microfone para este site e tente novamente.';
+        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return 'Nenhum microfone utilizável foi encontrado. Conecte o headset e tente novamente.';
+        if (name === 'NotReadableError' || name === 'TrackStartError') return 'O microfone está ocupado por outro aplicativo. Feche-o e tente novamente.';
+        return 'Não foi possível preparar o microfone. Reconecte o headset, atualize a página e tente novamente.';
+    };
+
+    const showAudioProblem = async (title, message) => window.ThconectDialog.alert({
+        title,
+        message,
+        confirmLabel: 'Entendi',
+        tone: 'danger',
+    });
+
+    const ensureAudioReadyForCall = async () => {
+        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+            await showAudioProblem('Áudio indisponível', 'A chamada requer HTTPS e um navegador atual com acesso ao microfone.');
+            return false;
+        }
+        try {
+            const permission = await navigator.permissions?.query?.({ name: 'microphone' });
+            if (permission?.state === 'denied') {
+                await showAudioProblem('Microfone bloqueado', 'Permita o microfone nas configurações do navegador antes de fazer ou atender chamadas.');
+                return false;
+            }
+        } catch {
+            // Alguns navegadores não expõem a consulta de permissão; o acesso é validado ao iniciar a chamada.
+        }
+        return true;
+    };
+
+    const setMicrophoneMuted = (muted) => {
+        microphoneMuted = muted;
+        if (currentSession) muted ? currentSession.mute({ audio: true }) : currentSession.unmute({ audio: true });
+        elements.muteButton.setAttribute('aria-pressed', String(muted));
+        elements.muteButton.lastChild.textContent = muted ? 'Com áudio' : 'Silenciar';
+    };
+
     const formatDuration = (seconds) => {
         const value = Math.max(0, Number(seconds) || 0);
         const hours = Math.floor(value / 3600);
@@ -1078,6 +1091,9 @@ if (config) {
         body: JSON.stringify({ status, ...(durationSeconds === null ? {} : { duration_seconds: durationSeconds }), ...outcome }),
     });
 
+    /* Browser-side MediaRecorder is intentionally disabled. A local WebM can
+       contain only one leg and must never compete with Asterisk MixMonitor. */
+    if (false) {
     const startRecording = async (session) => {
         if (!config.recordCalls || typeof MediaRecorder === 'undefined' || !session.connection) return;
 
@@ -1131,16 +1147,15 @@ if (config) {
         return api(`${config.callsBaseUrl}/${callId}/gravacao`, { method: 'POST', body: form });
     };
 
+    }
+
     const finishCall = async (status, started, outcome = {}) => {
         if (callFinished) return;
         callFinished = true;
         const durationSeconds = callStartedAt ? Math.floor((Date.now() - callStartedAt.getTime()) / 1000) : 0;
-        const recording = await stopRecording();
-
         try {
             let call = await currentCallPromise;
             if (!call?.id) return started;
-            if (recording) call = await uploadRecording(call.id, recording);
             call = await updateCall(call.id, status, durationSeconds, outcome);
             renderHistory(call);
         } catch (error) {
@@ -1184,8 +1199,6 @@ if (config) {
 
     const resetCallUi = () => {
         stopCallSignal();
-        clearTimeout(activeMediaCheckTimer);
-        activeMediaCheckTimer = null;
         elements.remoteAudio.pause();
         elements.remoteAudio.srcObject = null;
         currentSession = null;
@@ -1274,8 +1287,8 @@ if (config) {
         elements.remoteAudio.srcObject = remoteStream;
         elements.remoteAudio.autoplay = true;
         elements.remoteAudio.playsInline = true;
-        syncSpeakerControls();
-        if (!(await applySpeaker())) return false;
+        elements.remoteAudio.muted = false;
+        elements.remoteAudio.volume = 1;
         try {
             await elements.remoteAudio.play();
             return true;
@@ -1352,6 +1365,9 @@ if (config) {
         },
     });
 
+    /* The old active media probe was coupled to the removed console and could
+       raise false "revisar áudio" warnings during normal call setup/silence. */
+    if (false) {
     const renderCallMediaStatus = (stats, state = 'pending') => {
         if (!elements.callMediaStatus) return;
         elements.callMediaStatus.classList.remove('healthy', 'degraded');
@@ -1527,6 +1543,33 @@ if (config) {
         }
     };
 
+    }
+
+    const scheduleActiveMediaCheck = (session) => {
+        window.setTimeout(() => {
+            if (currentSession !== session) return;
+            const connection = session.connection;
+            const state = ['failed', 'closed'].includes(connection?.connectionState)
+                || ['failed', 'disconnected'].includes(connection?.iceConnectionState)
+                ? 'failed'
+                : 'healthy';
+            // Persist only aggregate diagnostics for later support analysis.
+            const call = currentCallPromise;
+            if (!call || !connection?.getStats) return;
+            connection.getStats().then((reports) => {
+                let inboundPackets = 0; let outboundPackets = 0; let inboundBytes = 0; let outboundBytes = 0;
+                reports.forEach((report) => {
+                    if ((report.kind || report.mediaType) !== 'audio' || report.isRemote) return;
+                    if (report.type === 'inbound-rtp') { inboundPackets += Number(report.packetsReceived || 0); inboundBytes += Number(report.bytesReceived || 0); }
+                    if (report.type === 'outbound-rtp') { outboundPackets += Number(report.packetsSent || 0); outboundBytes += Number(report.bytesSent || 0); }
+                });
+                call.then((record) => record?.id && updateCall(record.id, 'answered', null, {
+                    media_diagnostics: { state, webrtc: { inbound_packets: inboundPackets, outbound_packets: outboundPackets, inbound_bytes: inboundBytes, outbound_bytes: outboundBytes } },
+                })).catch(() => {});
+            }).catch(() => {});
+        }, 20000);
+    };
+
     const attachSession = (session, direction) => {
         currentSession = session;
         callFinished = false;
@@ -1576,14 +1619,13 @@ if (config) {
             elements.hangupButton.disabled = false;
             startTimer();
             recoverRemoteAudio(session).catch(() => {});
-            scheduleActiveMediaCheck(session).catch((error) => console.warn('Falha ao verificar o áudio WebRTC.', error));
+            scheduleActiveMediaCheck(session);
             try {
                 const call = await currentCallPromise;
-                if (call?.id) {
-                    await updateCall(call.id, 'answered');
-                    persistMediaDiagnostics(currentCallPromise, session.connection, 'accepted').catch(() => {});
-                }
-                await startRecording(session);
+                if (call?.id) await updateCall(call.id, 'answered');
+                // A gravação exibida ao usuário é iniciada e mixada pelo
+                // Asterisk (MixMonitor), nunca pelo navegador.
+                elements.recordingIndicator.hidden = !config.recordCalls;
             } catch (error) {
                 console.warn('Não foi possível iniciar o registro da chamada.', error);
             }
@@ -1740,15 +1782,7 @@ if (config) {
     document.querySelector('#answerButton')?.addEventListener('click', async () => {
         if (!currentSession) return;
 
-        if (microphoneMuted || microphoneVolume <= 0 || speakerMuted || speakerVolume <= 0) {
-            await showAudioProblem(
-                'Áudio desativado para atender',
-                microphoneMuted || microphoneVolume <= 0
-                    ? 'Ative o microfone e deixe o volume acima de zero antes de atender.'
-                    : 'Ative a saída de áudio e deixe o volume acima de zero antes de atender.',
-            );
-            return;
-        }
+        if (!(await ensureAudioReadyForCall())) return;
 
         try {
             const mediaStream = await prepareCallMicrophone();
@@ -2084,17 +2118,11 @@ if (config) {
         clearInterval(appointmentDueTimer);
         clearInterval(presenceTimer);
         clearInterval(lineStateTimer);
-        clearTimeout(activeMediaCheckTimer);
-        clearTimeout(audioDeviceChangeTimer);
-        microphonePreviewAudio?.pause();
-        microphoneTestStream?.getTracks().forEach((track) => track.stop());
         releaseCallMicrophone();
         ua.stop();
     });
 
     try {
-        syncAudioConsoleVisibility();
-        initializeAudioConsole();
         loadAppointments();
         appointmentPollTimer = window.setInterval(loadAppointments, 15000);
         ua.start();

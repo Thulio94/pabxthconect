@@ -62,7 +62,12 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,g)', $dialplan);
         $this->assertStringContainsString('Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id.',40,g)', $dialplan);
         $this->assertStringContainsString('StopMixMonitor()', $dialplan);
+        $this->assertStringContainsString('GotoIf($["${DIALSTATUS}"="ANSWER"]?keep-recording)', $dialplan);
         $this->assertStringContainsString('System(rm -f "${RECORDING_ROOT}/${CALL_RECORDING_FILE}")', $dialplan);
+        $this->assertLessThan(
+            strpos($dialplan, 'System(rm -f "${RECORDING_ROOT}/${CALL_RECORDING_FILE}")'),
+            strpos($dialplan, 'GotoIf($["${DIALSTATUS}"="ANSWER"]?keep-recording)'),
+        );
         $this->assertLessThan(
             strpos($dialplan, 'Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id),
             strpos($dialplan, 'Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id),
