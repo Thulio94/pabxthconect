@@ -34,6 +34,7 @@ class PhoneCallFlowTest extends TestCase
         $this->assertStringContainsString('return callMicrophoneStream;', $javascript);
         $this->assertStringContainsString('Asterisk MixMonitor', $javascript);
         $this->assertStringNotContainsString('await startRecording(session);', $javascript);
+        $this->assertStringNotContainsString('isInternalAudioTest(session)', $javascript);
     }
 
     public function test_dashboard_shows_the_twenty_five_latest_real_pbx_calls(): void

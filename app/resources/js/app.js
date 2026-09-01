@@ -1702,10 +1702,6 @@ if (config) {
     });
 
     ua.on('newRTCSession', ({ session }) => {
-        if (session.direction === 'outgoing' && isInternalAudioTest(session)) {
-            attachInternalAudioTest(session);
-            return;
-        }
         if (currentSession && currentSession !== session) {
             session.terminate({ status_code: 486, reason_phrase: 'Busy Here' });
             return;
