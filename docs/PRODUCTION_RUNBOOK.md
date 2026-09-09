@@ -65,7 +65,8 @@ Nunca compartilhar linhas `Authorization`, credenciais, tokens ou ambientes do E
 | `Dial(PJSIP/TECH55...@trunk-ID)` | Dialplan acrescentou a TECH corretamente |
 | `INVITE sip:TECH55...@softswitch` | Asterisk realmente enviou ao softswitch |
 | `100 Trying` | Softswitch recebeu a tentativa |
-| `183 Session Progress` | Destino está progredindo; pode haver toque ou mídia antecipada |
+| `180 Ringing` | A rota confirmou toque; somente a partir desta resposta o discador pode gerar ringback local |
+| `183 Session Progress` | A rota iniciou progresso/mídia antecipada; o discador não gera toque artificial e reproduz somente a mídia recebida |
 | `200 OK` | Transação/chamada aceita; correlacionar pelo diálogo porque registros e chamadas aparecem misturados |
 | `404 Not Found` após o INVITE externo | Conferir TECH, formato final, vínculo, prioridade e host da rota |
 | `487 Request Terminated` | Uma transação foi cancelada; normalmente operador/navegador desligou ou houve cancelamento durante o toque |

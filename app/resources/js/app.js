@@ -1252,6 +1252,7 @@ if (config) {
         stopCallSignal();
         const number = outgoingDial.variants[outgoingDial.index];
         outgoingDial.routeReached = false;
+        outgoingDial.ringbackStarted = false;
         currentSession = null;
         callFinished = false;
         elements.callButton.disabled = true;
@@ -1593,13 +1594,33 @@ if (config) {
 
         session.on('progress', (event) => {
             const statusCode = Number(event?.response?.status_code || 0);
-            if (direction === 'outgoing' && outgoingDial && [180, 183].includes(statusCode)) {
-                if (!outgoingDial.routeReached) startRingbackSignal();
-                outgoingDial.routeReached = true;
+            if (direction === 'outgoing' && outgoingDial) {
+                if ([180, 183].includes(statusCode)) outgoingDial.routeReached = true;
+
+                // Generate local ringback only after the upstream route really
+                // returns SIP 180. A 183 response represents early media; in
+                // that case the caller must hear the audio supplied by the
+                // route instead of an artificial ringing tone.
+                if (statusCode === 180 && !outgoingDial.ringbackStarted) {
+                    startRingbackSignal();
+                    outgoingDial.ringbackStarted = true;
+                }
+                if (statusCode === 183) {
+                    stopCallSignal();
+                    outgoingDial.ringbackStarted = false;
+                }
             }
-            setLineState('Chamando', `Aguardando ${number} atender.`, 'calling');
+
+            const progressMessage = statusCode === 180
+                ? `A rota informou que ${number} está tocando.`
+                : statusCode === 183
+                    ? 'A rota iniciou o áudio de progresso da chamada.'
+                    : 'Conectando a chamada com a rota.';
+            setLineState(statusCode === 180 ? 'Tocando' : 'Chamando', progressMessage, 'calling');
             elements.callDirection.textContent = direction === 'incoming' ? 'Recebendo' : 'Saída';
-            if (direction === 'outgoing') elements.activeCallLabel.textContent = 'TOCANDO';
+            if (direction === 'outgoing') {
+                elements.activeCallLabel.textContent = statusCode === 180 ? 'TOCANDO' : 'CONECTANDO';
+            }
         });
 
         session.on('accepted', async () => {
@@ -1762,6 +1783,7 @@ if (config) {
                 variants,
                 index: 0,
                 routeReached: false,
+                ringbackStarted: false,
                 accepted: false,
                 mediaStream,
             };

@@ -33,6 +33,10 @@ class PhoneCallFlowTest extends TestCase
         $this->assertStringContainsString('ensureAudioReadyForCall()', $javascript);
         $this->assertStringContainsString('return callMicrophoneStream;', $javascript);
         $this->assertStringContainsString('Asterisk MixMonitor', $javascript);
+        $this->assertStringContainsString('if (statusCode === 180 && !outgoingDial.ringbackStarted)', $javascript);
+        $this->assertStringContainsString('if (statusCode === 183)', $javascript);
+        $this->assertStringContainsString('the caller must hear the audio supplied by the', $javascript);
+        $this->assertStringNotContainsString('if (!outgoingDial.routeReached) startRingbackSignal();', $javascript);
         $this->assertStringNotContainsString('await startRecording(session);', $javascript);
         $this->assertStringNotContainsString('isInternalAudioTest(session)', $javascript);
     }
