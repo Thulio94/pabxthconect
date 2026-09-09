@@ -23,7 +23,7 @@ case "$docker_local_net" in
   *[!0-9a-fA-F.:/]*) echo "PBX_DOCKER_LOCAL_NET inválido." >&2; exit 1 ;;
 esac
 
-mkdir -p /etc/asterisk/generated /var/spool/asterisk/monitor
+mkdir -p /etc/asterisk/generated /var/spool/asterisk/monitor /var/log/asterisk/cdr-csv
 umask 077
 printf '[%s]\nsecret = %s\nread = system,call,log,verbose,command,agent,user\nwrite = system,call,command,originate\n' \
   "$ami_username" "$ami_secret" > /etc/asterisk/generated/manager_credentials.conf

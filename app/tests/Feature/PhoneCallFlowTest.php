@@ -36,6 +36,9 @@ class PhoneCallFlowTest extends TestCase
         $this->assertStringContainsString('if (statusCode === 180 && !outgoingDial.ringbackStarted)', $javascript);
         $this->assertStringContainsString('if (statusCode === 183)', $javascript);
         $this->assertStringContainsString('the caller must hear the audio supplied by the', $javascript);
+        $this->assertStringContainsString("session.on('peerconnection'", $javascript);
+        $this->assertStringContainsString('fast 183 early media (voicemail/operator announcements) is not lost', $javascript);
+        $this->assertStringContainsString('recoverRemoteAudio(session).catch(() => {});', $javascript);
         $this->assertStringNotContainsString('if (!outgoingDial.routeReached) startRingbackSignal();', $javascript);
         $this->assertStringNotContainsString('await startRecording(session);', $javascript);
         $this->assertStringNotContainsString('isInternalAudioTest(session)', $javascript);

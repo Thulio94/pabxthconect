@@ -1309,6 +1309,20 @@ if (config) {
         return receiverTrack ? attachRemoteAudioTrack(receiverTrack) : false;
     };
 
+    const bindRemoteAudio = (session, connection = session?.connection) => {
+        if (!connection || connection.__thRemoteAudioBound) return;
+        connection.__thRemoteAudioBound = true;
+
+        connection.addEventListener('track', (event) => {
+            attachRemoteAudioTrack(event.track, event.streams?.[0] || null).catch(() => {});
+        });
+        connection.getReceivers?.().forEach((receiver) => {
+            if (receiver.track?.kind === 'audio') {
+                attachRemoteAudioTrack(receiver.track).catch(() => {});
+            }
+        });
+    };
+
     const readWebRtcAudioStats = async (connection) => {
         if (!connection?.getStats) return null;
         const reports = await connection.getStats();
@@ -1588,8 +1602,12 @@ if (config) {
             elements.hangupButton.disabled = false;
         }
 
-        session.connection?.addEventListener('track', (event) => {
-            attachRemoteAudioTrack(event.track, event.streams?.[0] || null).catch(() => {});
+        // newRTCSession can be emitted before JsSIP creates its RTCPeerConnection.
+        // Bind both the current connection and the later peerconnection event so
+        // fast 183 early media (voicemail/operator announcements) is not lost.
+        bindRemoteAudio(session);
+        session.on('peerconnection', (event) => {
+            bindRemoteAudio(session, event.peerconnection || session.connection);
         });
 
         session.on('progress', (event) => {
@@ -1608,6 +1626,8 @@ if (config) {
                 if (statusCode === 183) {
                     stopCallSignal();
                     outgoingDial.ringbackStarted = false;
+                    bindRemoteAudio(session);
+                    recoverRemoteAudio(session).catch(() => {});
                 }
             }
 
@@ -1639,6 +1659,7 @@ if (config) {
             elements.holdButton.disabled = false;
             elements.hangupButton.disabled = false;
             startTimer();
+            bindRemoteAudio(session);
             recoverRemoteAudio(session).catch(() => {});
             scheduleActiveMediaCheck(session);
             try {
@@ -1650,6 +1671,11 @@ if (config) {
             } catch (error) {
                 console.warn('Não foi possível iniciar o registro da chamada.', error);
             }
+        });
+
+        session.on('confirmed', () => {
+            bindRemoteAudio(session);
+            recoverRemoteAudio(session).catch(() => {});
         });
 
         session.on('ended', async () => {
