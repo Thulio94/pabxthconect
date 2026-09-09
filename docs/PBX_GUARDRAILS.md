@@ -87,6 +87,7 @@ Correção permanente:
 - Alterar nomes/caminhos dos volumes em produção sem backup e restauração testada.
 - Fazer `docker compose down -v`, apagar volumes ou recriar banco em produção.
 - Expor UDP 5060 indiscriminadamente; a rota TECH deve usar IPs autorizados e firewall.
+- Permitir que o SDP enviado à operadora anuncie o IP privado do contêiner (`172.x`). Cada endpoint de trunk deve usar `PBX_PUBLIC_IP` em `media_address`; a reescrita do transporte permanece como proteção adicional.
 - Aplicar `DROP --dport 5060` sem limitar a interface de entrada: isso também bloqueia os INVITEs que saem do contêiner para o softswitch. Como este PBX somente origina chamadas, não publicar 5060 no Compose; se houver regra adicional, bloquear apenas tráfego novo recebido pela interface pública.
 
 ## Confirmações da interface

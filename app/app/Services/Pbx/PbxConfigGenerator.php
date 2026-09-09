@@ -47,7 +47,13 @@ class PbxConfigGenerator
 
     private function trunks(): string
     {
-        return SipTrunk::query()->where('is_active', true)->get()->map(function (SipTrunk $trunk) {
+        $mediaAddress = trim((string) config('pbx.public_media_address'));
+        if ($mediaAddress !== '' && filter_var($mediaAddress, FILTER_VALIDATE_IP) === false) {
+            throw new RuntimeException('PBX_PUBLIC_IP inválido para o SDP do trunk.');
+        }
+        $mediaAddressLine = $mediaAddress !== '' ? "media_address={$mediaAddress}\n" : '';
+
+        return SipTrunk::query()->where('is_active', true)->get()->map(function (SipTrunk $trunk) use ($mediaAddressLine) {
             $id = 'trunk-'.$trunk->id;
             $host = $this->value($trunk->host);
             $port = (int) $trunk->port;
@@ -64,7 +70,7 @@ class PbxConfigGenerator
 
             return $auth
                 ."[{$id}-aor]\ntype=aor\ncontact=sip:{$host}:{$port}\nqualify_frequency=30\nqualify_timeout=3.0\n\n"
-                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\ndirect_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nrtp_keepalive=20\n\n";
+                ."[{$id}]\ntype=endpoint\ntransport=transport-udp\naors={$id}-aor\n{$authLine}{$fromDomain}{$fromUser}{$proxy}disallow=all\nallow={$codecs}\n{$mediaAddressLine}direct_media=no\nforce_rport=yes\nrewrite_contact=yes\nrtp_symmetric=yes\nrtp_keepalive=20\n\n";
         })->implode('');
     }
 

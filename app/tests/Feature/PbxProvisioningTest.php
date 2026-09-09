@@ -19,7 +19,10 @@ class PbxProvisioningTest extends TestCase
     {
         $runtime = storage_path('framework/testing/pbx-runtime');
         File::deleteDirectory($runtime);
-        config(['pbx.runtime_path' => $runtime]);
+        config([
+            'pbx.runtime_path' => $runtime,
+            'pbx.public_media_address' => '203.0.113.10',
+        ]);
 
         $tenant = Tenant::create(['name' => 'Empresa PBX', 'slug' => 'empresa-pbx', 'status' => 'active']);
         $trunk = SipTrunk::create([
@@ -90,6 +93,20 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString('rewrite_contact=yes', $trunks);
         $this->assertStringContainsString('rtp_symmetric=yes', $trunks);
         $this->assertStringContainsString('rtp_keepalive=20', $trunks);
+        $this->assertStringContainsString('media_address=203.0.113.10', $trunks);
 
+    }
+
+    public function test_it_rejects_an_invalid_public_media_address(): void
+    {
+        config([
+            'pbx.runtime_path' => storage_path('framework/testing/pbx-runtime'),
+            'pbx.public_media_address' => 'invalid.example',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('PBX_PUBLIC_IP inválido para o SDP do trunk.');
+
+        app(PbxConfigGenerator::class)->generate();
     }
 }

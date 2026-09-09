@@ -43,6 +43,7 @@ $checks = [ordered]@{
     'Rotas respeitam prioridade da empresa' = $generator.Contains("orderBy('tenant_sip_trunks.priority')")
     'Gravação inicia com MixMonitor' = $generator.Contains('MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)')
     'Trunk preserva simetria RTP/NAT' = $generator.Contains('force_rport=yes') -and $generator.Contains('rewrite_contact=yes') -and $generator.Contains('rtp_symmetric=yes')
+    'Trunk anuncia IP público no SDP' = $generator.Contains('media_address={$mediaAddress}') -and $compose.Contains('PBX_PUBLIC_IP: ${PBX_PUBLIC_IP:?Defina PBX_PUBLIC_IP no Easypanel}') -and $tests.Contains('media_address=203.0.113.10')
     'Teste interno não alcança rota TECH' = $generator.Contains('exten => *900,1,NoOp(WebRTC audio check') -and $generator.Contains('same => n,Echo()')
     'Faixa RTP suporta capacidade planejada' = $rtp.Contains('rtpend = 10299') -and $compose.Contains('10101-10299:10101-10299/udp')
     'TURN usa credenciais temporárias' = $turnFactory.Contains('hash_hmac') -and $turnFactory.Contains("now()->addSeconds")

@@ -2,6 +2,7 @@
 
 return [
     'runtime_path' => env('PBX_RUNTIME_PATH', storage_path('app/pbx-runtime')),
+    'public_media_address' => env('PBX_PUBLIC_IP'),
     'sip_domain' => env('PBX_SIP_DOMAIN', 'localhost'),
     'websocket_url' => env('PBX_WEBSOCKET_URL', 'ws://localhost:8088/asterisk/ws'),
     'turn' => [
