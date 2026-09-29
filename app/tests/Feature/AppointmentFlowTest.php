@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Appointment;
 use App\Models\Extension;
+use App\Models\PhoneLicenseLease;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -62,6 +63,7 @@ class AppointmentFlowTest extends TestCase
         $user = User::factory()->create(['tenant_id' => $tenant->id]);
         $number = $suffix ? 1000 : 999;
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => $number, 'sip_username' => "t{$tenant->id}-e{$number}", 'sip_secret' => 'Senha123', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
         $session = ['user_id' => $user->id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => (string) $number];
         return [$user, $extension, $session];
     }

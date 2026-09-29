@@ -11,6 +11,7 @@ use App\Models\PauseReason;
 use App\Models\SupervisionSession;
 use App\Models\Tenant;
 use App\Services\OperatorActivityRecorder;
+use App\Services\PhoneLicenseManager;
 use App\Services\Pbx\CallStateReconciler;
 use App\Services\Pbx\TurnCredentialFactory;
 use Illuminate\Http\JsonResponse;
@@ -238,7 +239,7 @@ class AdminSupervisionController extends Controller
         ]);
     }
 
-    public function forceLogout(Request $request, Extension $extension, OperatorActivityRecorder $activity): JsonResponse
+    public function forceLogout(Request $request, Extension $extension, OperatorActivityRecorder $activity, PhoneLicenseManager $licenses): JsonResponse
     {
         $this->authorizeTenant($request, $extension->tenant_id);
         abort_unless($extension->status === 'active', 422, 'O ramal não está ativo.');
@@ -254,6 +255,7 @@ class AdminSupervisionController extends Controller
             $request->session()->getHandler()->destroy((string) $sessionKey);
         }
 
+        $licenses->releaseForExtension($extension);
         $activity->forceLogout($extension, $user, $request->user());
 
         return response()->json([

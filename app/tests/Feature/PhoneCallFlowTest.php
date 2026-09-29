@@ -4,9 +4,11 @@ namespace Tests\Feature;
 
 use App\Models\CallRecord;
 use App\Models\Extension;
+use App\Models\PhoneLicenseLease;
 use App\Models\Recording;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\PhoneLicenseManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\File;
@@ -20,10 +22,9 @@ class PhoneCallFlowTest extends TestCase
     public function test_dashboard_uses_native_call_audio_without_console_or_browser_recording(): void
     {
         [$tenant, $extension] = $this->extension();
+        $this->loginAgent($extension);
 
-        $this->actingAs($extension->user)
-            ->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
-            ->get('/telefone')
+        $this->get('/telefone')
             ->assertOk()
             ->assertDontSee('id="audioConsole"', false)
             ->assertDontSee('id="testMicrophoneButton"', false)
@@ -53,7 +54,8 @@ class PhoneCallFlowTest extends TestCase
         }
         CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => '5511888888888', 'status' => 'completed', 'started_at' => now()->subDay()]);
 
-        $response = $this->actingAs($extension->user)->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])->get('/telefone');
+        $this->loginAgent($extension);
+        $response = $this->get('/telefone');
         $response->assertOk();
         $history = collect($response->viewData('history'));
         $this->assertCount(25, $history);
@@ -64,34 +66,34 @@ class PhoneCallFlowTest extends TestCase
     {
         Storage::fake('pbx_recordings');
         [$tenant, $extension] = $this->extension();
+        $this->loginAgent($extension);
         $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound', 'to_number' => '5511999999999', 'status' => 'completed', 'started_at' => now(), 'answered_at' => now(), 'ended_at' => now()]);
         Recording::create(['call_record_id' => $call->id, 'storage_disk' => 'pbx_recordings', 'path' => 'tenant-1/test.wav', 'size_bytes' => 100, 'available_at' => now()]);
         Storage::disk('pbx_recordings')->put('tenant-1/test.wav', str_repeat('a', 100));
 
-        $this->actingAs($extension->user)->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
-            ->get("/telefone/historico/{$call->id}/gravacao")->assertOk();
+        $this->get("/telefone/historico/{$call->id}/gravacao")->assertOk();
 
         $other = $this->extension('outra');
-        $this->actingAs($other[1]->user)->withSession(['sip_agent' => $this->agentSession($other[0], $other[1])])
-            ->get("/telefone/historico/{$call->id}/gravacao")->assertNotFound();
+        $this->post('/entrar', ['email' => $other[1]->user->email, 'password' => $other[1]->sip_secret])->assertRedirect('/telefone');
+        $this->get("/telefone/historico/{$call->id}/gravacao")->assertNotFound();
     }
 
     public function test_webphone_keeps_history_but_rejects_one_sided_browser_recording_uploads(): void
     {
         [$tenant, $extension] = $this->extension();
-        $session = ['sip_agent' => $this->agentSession($tenant, $extension)];
+        $this->loginAgent($extension);
 
-        $created = $this->actingAs($extension->user)->withSession($session)
+        $created = $this
             ->postJson('/telefone/chamadas', ['direction' => 'outgoing', 'remote_number' => '(81) 99999-0000'])
             ->assertCreated();
         $callId = $created->json('id');
 
-        $this->actingAs($extension->user)->withSession($session)
+        $this
             ->patchJson("/telefone/chamadas/{$callId}", ['status' => 'answered'])->assertOk();
-        $this->actingAs($extension->user)->withSession($session)
+        $this
             ->post("/telefone/chamadas/{$callId}/gravacao", ['recording' => UploadedFile::fake()->createWithContent('chamada.webm', 'audio-do-navegador')])
             ->assertGone();
-        $this->actingAs($extension->user)->withSession($session)
+        $this
             ->patchJson("/telefone/chamadas/{$callId}", ['status' => 'completed', 'duration_seconds' => 12])->assertOk();
 
         $this->assertDatabaseHas('call_records', ['id' => $callId, 'extension_id' => $extension->id, 'status' => 'completed']);
@@ -101,15 +103,14 @@ class PhoneCallFlowTest extends TestCase
     public function test_browser_reuses_asterisk_call_created_first_with_e164_number(): void
     {
         [$tenant, $extension] = $this->extension();
+        $this->loginAgent($extension);
         $call = CallRecord::create([
             'tenant_id' => $tenant->id, 'extension_id' => $extension->id,
             'asterisk_uniqueid' => '1723480002.01', 'asterisk_linkedid' => '1723480002.01',
             'direction' => 'outbound', 'from_number' => '999', 'to_number' => '5581996342657',
             'status' => 'dialing', 'started_at' => now(),
         ]);
-        $session = ['sip_agent' => $this->agentSession($tenant, $extension)];
-
-        $this->actingAs($extension->user)->withSession($session)->postJson('/telefone/chamadas', [
+        $this->postJson('/telefone/chamadas', [
             'direction' => 'outgoing', 'remote_number' => '81996342657',
         ])->assertCreated()->assertJsonPath('id', $call->id);
 
@@ -120,13 +121,13 @@ class PhoneCallFlowTest extends TestCase
     public function test_agent_can_persist_sanitized_webrtc_media_diagnostics(): void
     {
         [$tenant, $extension] = $this->extension();
+        $this->loginAgent($extension);
         $call = CallRecord::create([
             'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'direction' => 'outbound',
             'to_number' => '5581999999999', 'status' => 'answered', 'started_at' => now(), 'answered_at' => now(),
         ]);
 
-        $this->actingAs($extension->user)->withSession(['sip_agent' => $this->agentSession($tenant, $extension)])
-            ->patchJson("/telefone/chamadas/{$call->id}", [
+        $this->patchJson("/telefone/chamadas/{$call->id}", [
                 'status' => 'answered',
                 'media_diagnostics' => [
                     'state' => 'healthy',
@@ -152,12 +153,13 @@ class PhoneCallFlowTest extends TestCase
         $user = User::factory()->create(['tenant_id' => $tenant->id]);
         $number = $suffix === '' ? 999 : 1000;
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => $number, 'sip_username' => "t{$tenant->id}-e{$number}", 'sip_secret' => 'senha-teste', 'status' => 'active']);
-
         return [$tenant, $extension];
     }
 
-    private function agentSession(Tenant $tenant, Extension $extension): array
+    private function loginAgent(Extension $extension): void
     {
-        return ['user_id' => $extension->user_id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => (string) $extension->number];
+        $this->post('/entrar', ['email' => $extension->user->email, 'password' => $extension->sip_secret])
+            ->assertRedirect('/telefone');
+        $this->assertTrue(app(PhoneLicenseManager::class)->hasLeaseForSession($extension->user, $extension, session()->getId()));
     }
 }

@@ -12,7 +12,7 @@ class Tenant extends Model
 
     protected $fillable = [
         'name', 'slug', 'status', 'theme', 'internal_token', 'record_calls',
-        'recording_retention_days', 'extension_min', 'extension_max',
+        'recording_retention_days', 'extension_min', 'extension_max', 'concurrent_agent_limit',
     ];
 
     protected $hidden = ['internal_token'];
@@ -40,5 +40,10 @@ class Tenant extends Model
     public function pauseReasons(): HasMany
     {
         return $this->hasMany(PauseReason::class);
+    }
+
+    public function phoneLicenseLeases(): HasMany
+    {
+        return $this->hasMany(PhoneLicenseLease::class);
     }
 }

@@ -6,6 +6,8 @@ use App\Models\User;
 use App\Models\Extension;
 use App\Models\ExtensionPresence;
 use App\Services\OperatorActivityRecorder;
+use App\Services\PhoneLicenseException;
+use App\Services\PhoneLicenseManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -23,7 +25,7 @@ class SipSessionController extends Controller
         return $request->session()->has('sip_agent') ? redirect()->route('phone.dashboard') : view('auth.login');
     }
 
-    public function store(Request $request, OperatorActivityRecorder $activity): RedirectResponse
+    public function store(Request $request, OperatorActivityRecorder $activity, PhoneLicenseManager $licenses): RedirectResponse
     {
         $data = $request->validate([
             'email' => ['required', 'email', 'max:255'],
@@ -50,6 +52,10 @@ class SipSessionController extends Controller
             return back()->withErrors(['email' => 'E-mail ou senha inválidos.'])->onlyInput('email');
         }
 
+        if ($licenses->requiresLicense($user) && $licenses->hasActiveLease($extension)) {
+            return back()->withErrors(['email' => 'Este agente já está conectado à tela de telefonia em outro computador.'])->onlyInput('email');
+        }
+
         RateLimiter::clear($key);
         Auth::login($user);
         $request->session()->regenerate();
@@ -59,6 +65,29 @@ class SipSessionController extends Controller
             return redirect()->route('admin.supervision.index');
         }
 
+        try {
+            if ($licenses->requiresLicense($user)) {
+                $licenses->acquire($user, $extension, $request->session()->getId());
+            }
+            $operatorSession = $activity->login($request, $user, $extension);
+        } catch (PhoneLicenseException $exception) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('phone.login')->withErrors(['email' => $exception->getMessage()]);
+        } catch (\Throwable $exception) {
+            if ($licenses->requiresLicense($user)) {
+                $licenses->releaseForSession($extension, $request->session()->getId());
+            }
+            report($exception);
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('phone.login')->withErrors(['email' => 'Não foi possível iniciar a sessão de telefonia.']);
+        }
+
         $request->session()->put('sip_agent', [
             'user_id' => $user->id,
             'tenant_id' => $extension->tenant_id,
@@ -66,18 +95,21 @@ class SipSessionController extends Controller
             'extension' => (string) $extension->number,
             'email' => $user->email,
             'role' => $user->role,
+            'license_session_key' => $licenses->requiresLicense($user) ? $request->session()->getId() : null,
         ]);
-        $operatorSession = $activity->login($request, $user, $extension);
         $request->session()->put('sip_agent.operator_session_id', $operatorSession->id);
 
         return redirect()->route('phone.dashboard');
     }
 
-    public function destroy(Request $request, OperatorActivityRecorder $activity): RedirectResponse
+    public function destroy(Request $request, OperatorActivityRecorder $activity, PhoneLicenseManager $licenses): RedirectResponse
     {
         $agent = $request->session()->get('sip_agent');
         if ($request->user() && $agent && ($extension = Extension::find($agent['extension_id'] ?? null))) {
             $activity->logout($extension, $request->user(), $agent['operator_session_id'] ?? null);
+            if ($licenses->requiresLicense($request->user())) {
+                $licenses->releaseForExtension($extension);
+            }
             ExtensionPresence::updateOrCreate(['extension_id' => $extension->id], ['pause_reason_id' => null, 'state' => 'offline', 'state_since' => now(), 'heartbeat_at' => now()]);
         }
         Auth::logout();

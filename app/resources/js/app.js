@@ -183,7 +183,8 @@ const initializeAdminContextModals = () => {
         detail.append(routePanel);
         const panels = [
             ['Editar empresa', detail.querySelector(':scope > .crud-full')],
-            ['Usuários e ramais', detail.querySelector(':scope > .extension-list')],
+            ['Usuários e ramais', detail.querySelector(':scope > .extension-list:not(.license-list)')],
+            ['Licenças em uso', detail.querySelector(':scope > .license-list')],
             ['Vincular rotas', routePanel],
             ['Configurar pausas', detail.querySelector(':scope > .tenant-pause-settings')],
         ];

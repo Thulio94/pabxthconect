@@ -27,4 +27,5 @@ class Extension extends Model
     public function operatorSessions(): HasMany { return $this->hasMany(OperatorSession::class); }
     public function pauseSessions(): HasMany { return $this->hasMany(OperatorPauseSession::class); }
     public function activityLogs(): HasMany { return $this->hasMany(OperatorActivityLog::class); }
+    public function phoneLicenseLease(): HasOne { return $this->hasOne(PhoneLicenseLease::class); }
 }

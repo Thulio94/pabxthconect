@@ -4,12 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\CallRecord;
 use App\Models\Extension;
+use App\Models\PhoneLicenseLease;
 use App\Models\SipTrunk;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Pbx\AmiClient;
 use App\Services\Pbx\ExtensionAllocator;
 use App\Services\Pbx\PbxConfigGenerator;
+use App\Services\OperatorActivityRecorder;
+use App\Services\PhoneLicenseManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -23,7 +26,7 @@ class SuperAdminController extends Controller
     public function index(): View
     {
         return view('admin.index', [
-            'tenants' => Tenant::query()->with(['trunks', 'extensions.user', 'pauseReasons' => fn ($query) => $query->orderBy('name')])->orderBy('name')->get(),
+            'tenants' => Tenant::query()->with(['trunks', 'extensions.user', 'phoneLicenseLeases.user', 'phoneLicenseLeases.extension', 'pauseReasons' => fn ($query) => $query->orderBy('name')])->orderBy('name')->get(),
             'trunks' => SipTrunk::query()->withCount('tenants')->orderBy('name')->get(),
             'latestRouteFailures' => CallRecord::query()
                 ->with(['tenant:id,name', 'extension:id,number', 'trunk:id,name,tech_prefix'])
@@ -43,6 +46,7 @@ class SuperAdminController extends Controller
             // Kept optional only while the legacy prototype still exists.
             'internal_token' => ['nullable', 'string', 'min:20', 'max:4096'],
             'recording_retention_days' => ['nullable', 'integer', Rule::in([0, 30, 60, 90, 180, 365])],
+            'concurrent_agent_limit' => ['required', 'integer', 'min:1', 'max:10000'],
         ]);
 
         Tenant::create([
@@ -55,7 +59,7 @@ class SuperAdminController extends Controller
         return back()->with('status', 'Empresa criada. Vincule uma rota e depois crie os ramais.');
     }
 
-    public function updateTenant(Request $request, Tenant $tenant): RedirectResponse
+    public function updateTenant(Request $request, Tenant $tenant, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
@@ -63,10 +67,21 @@ class SuperAdminController extends Controller
             'status' => ['required', Rule::in(['active', 'inactive'])],
             'internal_token' => ['nullable', 'string', 'min:20', 'max:4096'],
             'recording_retention_days' => ['nullable', 'integer', Rule::in([0, 30, 60, 90, 180, 365])],
+            'concurrent_agent_limit' => ['required', 'integer', 'min:0', 'max:10000'],
         ]);
+
+        $licensesInUse = $tenant->phoneLicenseLeases()->count();
+        if ((int) $data['concurrent_agent_limit'] < $licensesInUse) {
+            return back()->withErrors(['concurrent_agent_limit' => "Não é possível reduzir o limite abaixo das {$licensesInUse} licença(s) em uso."])->withInput();
+        }
 
         if (blank($data['internal_token'] ?? null)) {
             unset($data['internal_token']);
+        }
+
+        if ($data['status'] === 'inactive') {
+            PhoneLicenseLease::query()->where('tenant_id', $tenant->id)->with('extension')->get()
+                ->each(fn (PhoneLicenseLease $lease) => $lease->extension && $this->revokePhoneAccess($request, $lease->extension, $licenses, $activity));
         }
 
         $tenant->update([...$data, 'record_calls' => $request->boolean('record_calls', true)]);
@@ -186,7 +201,7 @@ class SuperAdminController extends Controller
         return back()->with('status', 'Rota desvinculada da empresa.');
     }
 
-    public function updateExtension(Request $request, Extension $extension): RedirectResponse
+    public function updateExtension(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
     {
         $request->merge(['email' => Str::lower(trim((string) $request->input('email')))]);
         $allowedRoles = $extension->user?->isSuperAdmin() ? ['superadmin'] : ['agent', 'tenant_admin'];
@@ -207,18 +222,22 @@ class SuperAdminController extends Controller
             $extension->user?->forceFill(['password' => $updates['sip_secret']])->save();
         }
         $extension->update($updates);
+        if ($data['role'] !== 'agent' || $data['status'] !== 'active') {
+            $this->revokePhoneAccess($request, $extension, $licenses, $activity);
+        }
         $this->provision();
         $response = back()->with('status', 'Usuário e ramal atualizados.');
 
         return isset($updates['sip_secret']) ? $response->with('new_extension_credentials', ['name' => $extension->user?->name, 'email' => $extension->user?->email, 'extension' => $extension->number, 'password' => $updates['sip_secret']]) : $response;
     }
 
-    public function destroyExtension(Extension $extension): RedirectResponse
+    public function destroyExtension(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
     {
         $user = $extension->user;
         if ($user?->isSuperAdmin()) {
             return back()->withErrors(['extension' => 'O ramal do superadmin não pode ser excluído.']);
         }
+        $this->revokePhoneAccess($request, $extension, $licenses, $activity);
         $extension->delete();
         $user?->delete();
         $this->provision();
@@ -253,6 +272,35 @@ class SuperAdminController extends Controller
 
         return back()->with('status', 'Usuário e ramal criados. A senha abaixo é definitiva até que o administrador gere outra.')
             ->with('new_extension_credentials', ['name' => $user->name, 'email' => $user->email, 'extension' => $extension->number, 'password' => $extension->sip_secret]);
+    }
+
+    public function forceLogoutLicense(Request $request, Tenant $tenant, PhoneLicenseLease $lease, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
+    {
+        abort_unless($lease->tenant_id === $tenant->id, 404);
+        $extension = $lease->extension;
+        $user = $lease->user;
+        abort_unless($extension && $user, 404);
+
+        $this->revokePhoneAccess($request, $extension, $licenses, $activity);
+
+        return back()->with('status', "A sessão de {$user->name} foi encerrada e a licença foi liberada.");
+    }
+
+    private function revokePhoneAccess(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): void
+    {
+        $lease = $licenses->releaseForExtension($extension);
+        if (! $lease) {
+            return;
+        }
+
+        if ($lease->session_key) {
+            $request->session()->getHandler()->destroy($lease->session_key);
+        }
+
+        $user = $extension->user;
+        if ($user) {
+            $activity->forceLogout($extension, $user, $request->user());
+        }
     }
 
     private function provision(): void

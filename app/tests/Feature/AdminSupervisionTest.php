@@ -6,6 +6,7 @@ use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\ExtensionPresence;
 use App\Models\OperatorActivityLog;
+use App\Models\PhoneLicenseLease;
 use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
 use App\Models\PauseReason;
@@ -28,6 +29,7 @@ class AdminSupervisionTest extends TestCase
         $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
         $agent = User::factory()->create(['tenant_id' => $tenant->id, 'name' => 'Agente Um']);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
         ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
         $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81999999999', 'status' => 'answered', 'started_at' => now()->subMinute(), 'answered_at' => now()->subSeconds(50)]);
 
@@ -96,6 +98,7 @@ class AdminSupervisionTest extends TestCase
         $this->actingAs($admin)->post('/administracao/pausas', ['tenant_id' => $tenant->id, 'name' => 'Banheiro', 'color' => '#f4b000', 'max_minutes' => 10])->assertRedirect()->assertSessionHasNoErrors();
         $pause = PauseReason::firstOrFail();
         $this->actingAs($admin)->get('/administracao')->assertOk()->assertSee('Configurar pausas')->assertSee('Banheiro');
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
         $session = ['sip_agent' => ['user_id' => $agent->id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => '999']];
 
         $this->actingAs($agent)->withSession($session)->postJson('/telefone/pausa', ['pause_reason_id' => $pause->id])->assertOk();
@@ -110,6 +113,7 @@ class AdminSupervisionTest extends TestCase
         $other = Tenant::create(['name' => 'Operação B', 'slug' => 'operacao-b', 'status' => 'active']);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
         $foreignPause = PauseReason::create(['tenant_id' => $other->id, 'name' => 'Feedback', 'color' => '#7154e8']);
 
         $this->actingAs($agent)->withSession(['sip_agent' => ['user_id' => $agent->id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => '999']])

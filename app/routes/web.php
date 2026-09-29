@@ -64,6 +64,7 @@ Route::prefix('administracao')->group(function () {
         Route::delete('/pausas/{pauseReason}', [AdminSupervisionController::class, 'destroyPause'])->name('admin.pauses.destroy');
         Route::post('/empresas', [SuperAdminController::class, 'storeTenant'])->name('admin.tenants.store');
         Route::put('/empresas/{tenant}', [SuperAdminController::class, 'updateTenant'])->name('admin.tenants.update');
+        Route::post('/empresas/{tenant}/licencas/{lease}/deslogar', [SuperAdminController::class, 'forceLogoutLicense'])->name('admin.tenants.licenses.logout');
         Route::delete('/empresas/{tenant}', [SuperAdminController::class, 'destroyTenant'])->name('admin.tenants.destroy');
         Route::post('/empresas/{tenant}/rotas', [SuperAdminController::class, 'attachTrunk'])->name('admin.tenants.trunks.store');
         Route::delete('/empresas/{tenant}/rotas/{trunk}', [SuperAdminController::class, 'detachTrunk'])->name('admin.tenants.trunks.destroy');

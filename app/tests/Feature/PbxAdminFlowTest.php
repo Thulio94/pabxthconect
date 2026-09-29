@@ -41,7 +41,7 @@ class PbxAdminFlowTest extends TestCase
         $trunk = SipTrunk::firstOrFail();
 
         $this->actingAs($admin)->post('/administracao/empresas', [
-            'name' => 'Empresa PBX', 'slug' => 'empresa-pbx', 'recording_retention_days' => 90, 'record_calls' => '1',
+            'name' => 'Empresa PBX', 'slug' => 'empresa-pbx', 'recording_retention_days' => 90, 'record_calls' => '1', 'concurrent_agent_limit' => 5,
         ])->assertRedirect()->assertSessionHasNoErrors();
         $tenant = Tenant::firstOrFail();
 
