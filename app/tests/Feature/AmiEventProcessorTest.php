@@ -29,6 +29,7 @@ class AmiEventProcessorTest extends TestCase
 
         $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId, 'Linkedid' => $uniqueId, 'Exten' => '551736214392']);
         $processor->process(['Event' => 'DialBegin', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId, 'DestChannel' => "PJSIP/trunk-{$trunk->id}-00000002"]);
+        $processor->process(['Event' => 'DialEnd', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId, 'DialStatus' => 'ANSWER']);
         $processor->process(['Event' => 'BridgeEnter', 'Channel' => "PJSIP/{$extension->sip_username}-00000001", 'Uniqueid' => $uniqueId]);
         Storage::disk('pbx_recordings')->put("tenant-{$tenant->id}/{$uniqueId}.wav", str_repeat('a', 100));
         $processor->process(['Event' => 'Hangup', 'Uniqueid' => $uniqueId, 'Cause-txt' => 'Normal Clearing']);
@@ -38,7 +39,7 @@ class AmiEventProcessorTest extends TestCase
         $this->assertNotNull($tenant->fresh()->extensions()->first()->calls()->first()->recording->available_at);
     }
 
-    public function test_trunk_leg_hangup_finishes_call_using_linked_id(): void
+    public function test_trunk_leg_hangup_does_not_finish_parent_call_before_failover_finishes(): void
     {
         Storage::fake('pbx_recordings');
         $tenant = Tenant::create(['name' => 'Empresa Linkedid', 'slug' => 'empresa-linkedid', 'status' => 'active', 'record_calls' => true]);
@@ -53,6 +54,10 @@ class AmiEventProcessorTest extends TestCase
         $processor->process(['Event' => 'Hangup', 'Uniqueid' => '1723480000.11', 'Linkedid' => $linkedId, 'Cause-txt' => 'Normal Clearing']);
 
         $call = CallRecord::where('asterisk_linkedid', $linkedId)->firstOrFail();
+        $this->assertNull($call->ended_at);
+
+        $processor->process(['Event' => 'Hangup', 'Uniqueid' => $linkedId, 'Linkedid' => $linkedId, 'Cause-txt' => 'Normal Clearing']);
+        $call->refresh();
         $this->assertSame('completed', $call->status);
         $this->assertNotNull($call->ended_at);
         $this->assertNotNull($call->recording?->available_at);
@@ -120,7 +125,6 @@ class AmiEventProcessorTest extends TestCase
         $processor = app(AmiEventProcessor::class);
 
         $processor->process(['Event' => 'Newchannel', 'Channel' => "PJSIP/{$extension->sip_username}-00000102", 'Uniqueid' => $uniqueId, 'Linkedid' => $uniqueId, 'Exten' => '5581999990000']);
-        Storage::disk('pbx_recordings')->put($path, str_repeat('a', 44));
         $processor->process(['Event' => 'Hangup', 'Uniqueid' => $uniqueId, 'Cause' => 18, 'Cause-txt' => 'No user responding']);
 
         $call = CallRecord::where('asterisk_uniqueid', $uniqueId)->firstOrFail();

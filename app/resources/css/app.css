@@ -84,7 +84,6 @@
 .pbx-rail > div,.pbx-rail > p { margin:0; background:#fff; min-height:72px; padding:13px 16px; }
 .pbx-rail span { display:block; font-size:24px; line-height:1; font-weight:900; color:var(--blue); letter-spacing:-.05em; }.pbx-rail small { font-size:11px; }.pbx-rail p { display:flex; align-items:center; color:#526b95; font-size:13px; line-height:1.4; }
 .pbx-form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; align-items:start; }.pbx-form-grid .panel { border-top:3px solid var(--blue); }.pbx-form-grid .panel:nth-child(2) { border-top-color:var(--cyan); }.pbx-form-grid .panel:nth-child(3) { border-top-color:var(--purple); }.pbx-form-grid .muted { margin-top:8px; min-height:58px; }
-.create-user-disclosure { margin-top:18px; }.create-user-disclosure summary { list-style:none; }.create-user-disclosure summary::-webkit-details-marker { display:none; }.create-user-disclosure[open] summary { display:none; }
 .credential-reveal { margin-bottom:18px; border:1px solid #9eddec; border-left:4px solid var(--cyan); border-radius:12px; background:linear-gradient(105deg,#ecfbff,#f7fbff); padding:17px 20px; display:flex; gap:24px; justify-content:space-between; align-items:center; }.credential-reveal h2 { margin:5px 0; }.credential-reveal p { color:#537098; font-size:13px; }.credential-reveal code { background:#102348; color:#d8f7ff; padding:12px 14px; border-radius:8px; font-size:15px; overflow-wrap:anywhere; }
 .pbx-registry { margin-top:20px; }.route-list { margin-top:12px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }.route-row { display:grid; grid-template-columns:auto minmax(220px,1fr) minmax(170px,.7fr) auto auto; gap:14px; align-items:center; padding:13px 16px; border-top:1px solid var(--line); }.route-row:first-child { border-top:0; }.route-glyph { width:32px; height:32px; display:grid; place-items:center; border-radius:8px; color:#fff; background:linear-gradient(140deg,var(--blue),var(--cyan)); font-weight:900; }.route-row strong { font-size:14px; }.route-use { border-radius:999px; padding:5px 8px; color:#0b6c60; background:#e2f6ef; font-size:11px; font-weight:800; white-space:nowrap; }
 .tenant-detail-grid { border-top:1px solid var(--line); padding:16px 18px 19px; display:grid; grid-template-columns:1.1fr .9fr .9fr; gap:16px; }.inline-form { display:grid; grid-template-columns:minmax(160px,1fr) 80px auto; align-items:end; gap:9px; }.inline-form .button { min-height:42px; }.tenant-routes,.extension-list { border-left:1px solid #e4ebf5; padding-left:16px; display:grid; align-content:start; gap:8px; }.tenant-routes > span,.extension-list > span { font-size:13px; color:#294269; }.tenant-routes small,.extension-list small { display:inline; margin-left:5px; font-size:10px; }.extension-list b { color:var(--blue); font-family:"IBM Plex Mono",Consolas,monospace; margin-right:5px; }
@@ -387,8 +386,32 @@
 .context-modal-body .tenant-pause-settings > summary { display:none; }
 .context-modal-body .tenant-pause-settings > .crud-editor { display:block; }
 .modal-open { overflow:hidden; }
-.pbx-form-grid .create-user-disclosure { display:none; margin-top:0; }
-.context-modal-body .create-user-disclosure { display:block; }
+
+/* Cadastro de equipe em lote, com respostas assíncronas dentro do modal da empresa */
+.context-modal-dialog:has([data-tenant-user-panel]) { width:min(1040px,100%); }
+.user-manager-head,.bulk-user-heading,.credential-results-heading,.tenant-user-list-heading { display:flex; align-items:center; justify-content:space-between; gap:18px; }
+.user-manager-head { margin-bottom:16px; }
+.user-manager-head .muted,.bulk-user-heading .muted,.credential-results-heading .muted { margin:5px 0 0; }
+.user-count,.tenant-user-list-heading > span { flex:none; padding:7px 11px; border-radius:999px; color:#1d4d8f; background:#eaf2fc; font-size:11px; font-weight:800; }
+.bulk-user-form { display:grid; gap:13px; padding:17px; border:1px solid #dce6f3; border-radius:12px; background:linear-gradient(145deg,#fbfdff,#f4f8fd); }
+.bulk-user-heading { align-items:flex-start; }.bulk-user-heading h3,.credential-results-heading h3,.tenant-user-list-heading h3 { margin:0; font-size:15px; }
+.bulk-user-rows { display:grid; gap:9px; }
+.bulk-user-row { position:relative; min-width:0; display:grid; grid-template-columns:minmax(140px,1fr) minmax(190px,1.3fr) minmax(170px,.9fr) 34px; align-items:end; gap:10px; margin:0; padding:12px; border:1px solid #e1e9f3; border-radius:10px; background:#fff; }
+.bulk-user-row legend { padding:0 5px; color:#5d7395; font-size:10px; font-weight:850; text-transform:uppercase; letter-spacing:.06em; }
+.bulk-user-row label { min-width:0; margin:0; font-size:10px; }.bulk-user-row input,.bulk-user-row select { min-width:0; min-height:39px; margin-top:5px; }
+.remove-user-row { width:34px; height:38px; border:1px solid #e6d7dc; border-radius:9px; color:#b53049; background:#fff5f6; font-size:22px; line-height:1; }.remove-user-row:disabled { opacity:.35; cursor:not-allowed; }
+.async-feedback { margin:12px 0; padding:11px 13px; border:1px solid #bbdfd1; border-radius:9px; color:#087a60; background:#effaf6; font-size:12px; font-weight:700; }
+.async-feedback[hidden] { display:none; }.async-feedback.is-error { border-color:#f0c3ca; color:#a12d43; background:#fff4f5; }.async-feedback.is-success { border-color:#bbdfd1; color:#087a60; background:#effaf6; }
+.credential-results { display:grid; gap:12px; margin:16px 0; padding:16px; border:1px solid #b7dfd3; border-left:4px solid #079579; border-radius:11px; background:#f4fbf8; }
+.credential-results[hidden] { display:none; }.credential-export { display:flex; gap:7px; flex-wrap:wrap; }.credential-results .table-wrap { max-height:240px; overflow:auto; }
+.credential-results table { min-width:650px; }.credential-results th { position:sticky; top:0; z-index:1; background:#e8f3ef; }.credential-secret { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-weight:800; letter-spacing:.03em; user-select:all; }
+.tenant-user-list { margin-top:22px; }.tenant-user-list-heading { margin-bottom:9px; }.tenant-user-item { overflow:hidden; border:1px solid #e1e9f3; border-radius:10px; background:#fff; }.tenant-user-item + .tenant-user-item { margin-top:7px; }
+.tenant-user-item > summary { min-height:60px; display:grid; grid-template-columns:58px minmax(0,1fr) auto auto; align-items:center; gap:12px; padding:9px 12px; cursor:pointer; list-style:none; }.tenant-user-item > summary::-webkit-details-marker { display:none; }
+.user-extension-number { padding:8px 7px; border-radius:8px; color:#fff; background:#173867; font:800 12px ui-monospace,SFMono-Regular,Consolas,monospace; text-align:center; }
+.tenant-user-identity { display:grid; gap:3px; min-width:0; }.tenant-user-identity b { overflow:hidden; color:#142f59; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }.tenant-user-identity small { overflow:hidden; color:#7184a2; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.extension-state { padding:6px 9px; border-radius:999px; color:#637794; background:#eff2f7; font-size:9px; font-weight:850; text-transform:uppercase; }.extension-state.active { color:#067b63; background:#e6f6f1; }
+.user-row-edit { color:#536d94; font-size:10px; font-weight:800; }.tenant-user-item[open] > summary { border-bottom:1px solid #e4ebf4; background:#f8fafd; }.tenant-user-editor { display:grid; gap:10px; padding:13px; background:#fbfcfe; }.tenant-user-editor > form:first-child { margin-top:0; }.tenant-user-editor .stack-form { margin-top:0; }
+.tenant-pause-settings .async-feedback { margin:0 0 14px; }.tenant-pause-create .async-feedback { grid-column:1/-1; }
 
 @media (max-width:760px) {
     .app-shell.sidebar-expanded { grid-template-columns:1fr; }
@@ -399,8 +422,13 @@
     #adminSidebar .side-icon { width:43px; }
     .context-modal { align-items:end; padding:0; }
     .context-modal-dialog { width:100%; max-height:92vh; border-radius:16px 16px 0 0; }
+    .context-modal-dialog:has([data-tenant-user-panel]) { width:100%; }
     .context-modal-body .tenant-route-management,.tenant-pause-layout { grid-template-columns:1fr; }
     .context-modal-body .tenant-routes { padding:16px 0 0; border:0; border-top:1px solid #e4ebf5; }
+    .bulk-user-row { grid-template-columns:1fr; align-items:stretch; padding:14px; }
+    .remove-user-row { position:absolute; top:7px; right:9px; }
+    .user-manager-head,.bulk-user-heading,.credential-results-heading { align-items:flex-start; flex-direction:column; }
+    .tenant-user-item > summary { grid-template-columns:48px minmax(0,1fr) auto; gap:8px; }.user-row-edit { display:none; }
 }
 
 @media (prefers-reduced-motion:reduce) { .app-shell,#adminSidebar,#adminSidebar .sidebar-toggle span,#adminSidebar .side-chevron { transition:none; } }

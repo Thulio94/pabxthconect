@@ -62,15 +62,16 @@ class PbxProvisioningTest extends TestCase
         $this->assertStringContainsString('rtp_keepalive=20', $endpoints);
         $this->assertStringContainsString('Set(TH_DEST=${FILTER(0-9,${EXTEN})})', $dialplan);
         $this->assertStringContainsString('Set(TH_DEST=55${TH_DEST})', $dialplan);
-        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,g)', $dialplan);
-        $this->assertStringContainsString('Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id.',40,g)', $dialplan);
-        $this->assertStringContainsString('StopMixMonitor()', $dialplan);
-        $this->assertStringContainsString('GotoIf($["${DIALSTATUS}"="ANSWER"]?keep-recording)', $dialplan);
-        $this->assertStringContainsString('System(rm -f "${RECORDING_ROOT}/${CALL_RECORDING_FILE}")', $dialplan);
+        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,U(record-call-'.$tenant->id.'^${UNIQUEID}^'.$tenant->id.'))', $dialplan);
+        $this->assertStringContainsString('Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id.',40,U(record-call-'.$tenant->id.'^${UNIQUEID}^'.$tenant->id.'))', $dialplan);
+        $this->assertStringContainsString('[record-call-'.$tenant->id.']', $dialplan);
+        $this->assertStringContainsString('MixMonitor(${RECORDING_ROOT}/${CALL_RECORDING_FILE},ab)', $dialplan);
         $this->assertLessThan(
-            strpos($dialplan, 'System(rm -f "${RECORDING_ROOT}/${CALL_RECORDING_FILE}")'),
-            strpos($dialplan, 'GotoIf($["${DIALSTATUS}"="ANSWER"]?keep-recording)'),
+            strpos($dialplan, 'MixMonitor('),
+            strpos($dialplan, 'Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id),
         );
+        $this->assertStringNotContainsString('StopMixMonitor()', $dialplan);
+        $this->assertStringNotContainsString('System(rm -f', $dialplan);
         $this->assertLessThan(
             strpos($dialplan, 'Dial(PJSIP/9044${TH_DEST}@trunk-'.$fallback->id),
             strpos($dialplan, 'Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id),
@@ -108,5 +109,22 @@ class PbxProvisioningTest extends TestCase
         $this->expectExceptionMessage('PBX_PUBLIC_IP inválido para o SDP do trunk.');
 
         app(PbxConfigGenerator::class)->generate();
+    }
+
+    public function test_tenant_without_recording_keeps_dial_continuation_without_mixmonitor(): void
+    {
+        $runtime = storage_path('framework/testing/pbx-runtime-no-recording');
+        File::deleteDirectory($runtime);
+        config(['pbx.runtime_path' => $runtime, 'pbx.public_media_address' => '203.0.113.10']);
+
+        $tenant = Tenant::create(['name' => 'Sem gravação', 'slug' => 'sem-gravacao', 'status' => 'active', 'record_calls' => false]);
+        $trunk = SipTrunk::create(['name' => 'Rota sem gravação', 'auth_mode' => 'ip_tech', 'host' => '192.0.2.10', 'tech_prefix' => '8033', 'is_active' => true]);
+        $tenant->trunks()->attach($trunk, ['priority' => 1, 'is_active' => true]);
+
+        app(PbxConfigGenerator::class)->generate();
+
+        $dialplan = File::get($runtime.'/extensions_tenants.conf');
+        $this->assertStringContainsString('Dial(PJSIP/8033${TH_DEST}@trunk-'.$trunk->id.',40,g)', $dialplan);
+        $this->assertStringNotContainsString('MixMonitor(', $dialplan);
     }
 }

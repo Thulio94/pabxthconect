@@ -58,20 +58,6 @@
                 </form>
             </section>
 
-            <section class="panel">
-                <p class="eyebrow">03 · USUÁRIO E RAMAL</p><h2>Criar credencial</h2>
-                <p class="muted">O e-mail é o login global. O sistema escolhe o próximo ramal livre de 999 a 10000 dentro da empresa.</p>
-                <details class="create-user-disclosure" @if($errors->has('user')) open @endif>
-                    <summary class="button button-primary">Criar usuário e ramal</summary>
-                    <form method="POST" action="{{ route('admin.users.store') }}" class="stack-form">
-                        @csrf
-                        <label>Empresa<select name="tenant_id" required><option value="">Selecione</option>@foreach($tenants as $tenant)<option value="{{ $tenant->id }}">{{ $tenant->name }}</option>@endforeach</select></label>
-                        <label>Nome<input name="name" required></label>
-                        <div class="form-pair"><label>E-mail<input name="email" type="email" required></label><label>Perfil<select name="role"><option value="agent">Agente</option><option value="tenant_admin">Administrador da empresa</option></select></label></div>
-                        <button class="button button-primary" type="submit">Gerar credencial do ramal</button>
-                    </form>
-                </details>
-            </section>
         </div>
 
         <section class="registry pbx-registry">
@@ -96,7 +82,7 @@
             </tbody></table></div>
         </section>
 
-        <section class="registry tenant-list">
+        <section class="registry tenant-list" id="usuarios-ramais">
             <div class="section-title"><div><p class="eyebrow">EMPRESAS E RAMAIS</p><h2>Configuração por empresa</h2></div></div>
             @forelse($tenants as $tenant)
                 <details class="panel tenant-card">
@@ -109,15 +95,11 @@
                         </form>
                         <div class="tenant-routes"><p class="mini-label">ROTAS ATIVAS</p>@forelse($tenant->trunks as $trunk)<span>{{ $trunk->name }} <small>prioridade {{ $trunk->pivot->priority }}</small><form method="POST" action="{{ route('admin.tenants.trunks.destroy', [$tenant, $trunk]) }}" data-confirm-title="Desvincular rota?" data-confirm="A rota {{ $trunk->name }} deixará de atender esta empresa." data-confirm-label="Desvincular" data-confirm-tone="danger">@csrf @method('DELETE')<button class="text-danger">Desvincular</button></form></span>@empty<span class="muted">Nenhuma rota vinculada.</span>@endforelse</div>
                         <div class="extension-list license-list"><p class="mini-label">LICENÇAS DE TELEFONIA · {{ $tenant->phoneLicenseLeases->count() }}/{{ $tenant->concurrent_agent_limit }} EM USO</p>@forelse($tenant->phoneLicenseLeases as $lease)<span><b>{{ $lease->user?->name ?? 'Agente removido' }}</b> <small>ramal {{ $lease->extension?->number ?? '—' }}</small><form method="POST" action="{{ route('admin.tenants.licenses.logout', [$tenant, $lease]) }}" data-confirm-title="Deslogar agente?" data-confirm="A sessão de {{ $lease->user?->name ?? 'este agente' }} será encerrada e a licença será liberada." data-confirm-label="Deslogar agente" data-confirm-tone="danger">@csrf<button class="text-danger">Deslogar</button></form></span>@empty<span class="muted">Nenhuma licença em uso.</span>@endforelse</div>
-                        <div class="extension-list"><p class="mini-label">RAMAIS</p>@forelse($tenant->extensions as $extension)<details><summary><b>{{ $extension->number }}</b> {{ $extension->user?->name ?? 'Sem usuário' }} <small>{{ $extension->status }}</small></summary><div class="crud-editor"><form method="POST" action="{{ route('admin.extensions.update', $extension) }}" class="stack-form">@csrf @method('PUT')<label>Nome<input name="name" value="{{ $extension->user?->name }}" required></label><label>E-mail<input name="email" type="email" value="{{ $extension->user?->email }}" required></label><div class="form-pair"><label>Ramal<input name="number" type="number" min="999" max="10000" value="{{ $extension->number }}" required></label><label>Perfil<select name="role">@if($extension->user?->isSuperAdmin())<option value="superadmin">Superadmin</option>@else<option value="agent" @selected($extension->user?->role === 'agent')>Agente</option><option value="tenant_admin" @selected($extension->user?->role === 'tenant_admin')>Admin empresa</option>@endif</select></label></div><div class="form-pair"><label>Status<select name="status"><option value="active" @selected($extension->status === 'active')>Ativo</option><option value="disabled" @selected($extension->status === 'disabled')>Desativado</option></select></label><label class="check"><input type="checkbox" name="rotate_secret" value="1"><span>Gerar nova senha SIP</span></label></div><button class="button button-primary">Salvar ramal</button></form>@unless($extension->user?->isSuperAdmin())<form method="POST" action="{{ route('admin.extensions.destroy', $extension) }}" data-confirm-title="Excluir usuário e ramal?" data-confirm="O acesso de {{ $extension->user?->name ?? 'este usuário' }} e o ramal {{ $extension->number }} serão removidos." data-confirm-label="Excluir usuário" data-confirm-tone="danger">@csrf @method('DELETE')<button class="button button-danger">Excluir usuário e ramal</button></form>@endunless</div></details>@empty<span class="muted">Nenhum ramal criado.</span>@endforelse</div>
-                        <details class="crud-full tenant-pause-settings"><summary class="button button-soft">Configurar pausas</summary><div class="crud-editor">
+                        <section class="extension-list" data-tenant-user-panel data-tenant-id="{{ $tenant->id }}">@include('admin.partials.tenant-users-content', ['tenant' => $tenant])</section>
+                        <details class="crud-full tenant-pause-settings"><summary class="button button-soft">Configurar pausas</summary><div class="crud-editor"><div class="async-feedback" data-async-feedback role="status" aria-live="polite" hidden></div>
                             <div class="tenant-pause-layout">
-                                <form method="POST" action="{{ route('admin.pauses.store') }}" class="tenant-pause-create">@csrf<input type="hidden" name="tenant_id" value="{{ $tenant->id }}"><label>Nome da pausa<input name="name" maxlength="80" placeholder="Ex.: Banheiro" required></label><label>Cor<input name="color" type="color" value="#f4b000" required></label><label>Limite (min)<input name="max_minutes" type="number" min="1" max="480" placeholder="Sem limite"></label><button class="button button-primary">Cadastrar pausa</button></form>
-                                <div class="tenant-pause-list">
-                                    @forelse($tenant->pauseReasons as $pause)
-                                    <details class="pause-item"><summary><i style="background:{{ $pause->color }}"></i><span><b>{{ $pause->name }}</b><small>{{ $pause->max_minutes ? $pause->max_minutes.' min' : 'sem limite' }}</small></span><em>{{ $pause->is_active ? 'Ativa' : 'Inativa' }}</em></summary><div class="pause-editor"><form method="POST" action="{{ route('admin.pauses.update', $pause) }}">@csrf @method('PUT')<label>Nome<input name="name" value="{{ $pause->name }}" required></label><label>Cor<input name="color" type="color" value="{{ $pause->color }}" required></label><label>Limite<input name="max_minutes" type="number" min="1" max="480" value="{{ $pause->max_minutes }}"></label><label class="check"><input type="checkbox" name="is_active" value="1" @checked($pause->is_active)><span>Ativa</span></label><button class="button button-primary">Salvar</button></form><form method="POST" action="{{ route('admin.pauses.destroy', $pause) }}" data-confirm-title="Excluir pausa?" data-confirm="A pausa {{ $pause->name }} deixará de estar disponível para os agentes desta empresa." data-confirm-label="Excluir pausa" data-confirm-tone="danger">@csrf @method('DELETE')<button class="button button-danger">Excluir</button></form></div></details>
-                                    @empty<div class="empty-cell">Nenhuma pausa cadastrada para esta empresa.</div>@endforelse
-                                </div>
+                                <form method="POST" action="{{ route('admin.pauses.store') }}" class="tenant-pause-create" data-async-form="pauses">@csrf<input type="hidden" name="tenant_id" value="{{ $tenant->id }}"><label>Nome da pausa<input name="name" maxlength="80" placeholder="Ex.: Banheiro" required></label><label>Cor<input name="color" type="color" value="#f4b000" required></label><label>Limite (min)<input name="max_minutes" type="number" min="1" max="480" placeholder="Sem limite"></label><button class="button button-primary">Cadastrar pausa</button><div class="async-feedback" data-async-feedback role="status" aria-live="polite" hidden></div></form>
+                                <div class="tenant-pause-list">@include('admin.partials.pause-list', ['pauses' => $tenant->pauseReasons])</div>
                             </div>
                         </div></details>
                     </div>

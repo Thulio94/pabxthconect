@@ -120,7 +120,8 @@ const initializeAdminContextModals = () => {
 
     document.querySelector('.pbx-rail')?.setAttribute('id', 'visao-geral');
     const createPanels = document.querySelectorAll('.pbx-form-grid > .panel');
-    ['nova-rota', 'nova-empresa', 'usuarios-ramais'].forEach((id, index) => createPanels[index]?.setAttribute('id', id));
+    ['nova-rota', 'nova-empresa'].forEach((id, index) => createPanels[index]?.setAttribute('id', id));
+    admin.querySelector('.tenant-list')?.setAttribute('id', 'usuarios-ramais');
     document.querySelectorAll('.pbx-registry')[1]?.setAttribute('id', 'diagnostico');
 
     const modal = document.createElement('div');
@@ -160,15 +161,6 @@ const initializeAdminContextModals = () => {
     modal.querySelectorAll('[data-context-close]').forEach((button) => button.addEventListener('click', close));
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !modal.hidden) close(); });
 
-    const createUser = admin.querySelector('.create-user-disclosure');
-    if (createUser) {
-        createUser.open = true;
-        const button = document.createElement('button');
-        button.type = 'button'; button.className = 'button button-primary'; button.textContent = 'Criar usuário e ramal';
-        createUser.parentNode.insertBefore(button, createUser);
-        button.addEventListener('click', () => open(createUser, 'Criar usuário e ramal', button));
-    }
-
     admin.querySelectorAll('.tenant-card').forEach((card) => {
         card.open = true;
         const summary = card.querySelector(':scope > summary');
@@ -182,17 +174,18 @@ const initializeAdminContextModals = () => {
         if (routeList) routePanel.append(routeList);
         detail.append(routePanel);
         const panels = [
-            ['Editar empresa', detail.querySelector(':scope > .crud-full')],
-            ['Usuários e ramais', detail.querySelector(':scope > .extension-list:not(.license-list)')],
-            ['Licenças em uso', detail.querySelector(':scope > .license-list')],
-            ['Vincular rotas', routePanel],
-            ['Configurar pausas', detail.querySelector(':scope > .tenant-pause-settings')],
+            ['Editar empresa', detail.querySelector(':scope > .crud-full'), 'company'],
+            ['Usuários e ramais', detail.querySelector(':scope > .extension-list:not(.license-list)'), 'users'],
+            ['Licenças em uso', detail.querySelector(':scope > .license-list'), 'licenses'],
+            ['Vincular rotas', routePanel, 'routes'],
+            ['Configurar pausas', detail.querySelector(':scope > .tenant-pause-settings'), 'pauses'],
         ];
         const actions = document.createElement('div'); actions.className = 'tenant-card-actions';
-        panels.forEach(([label, panel]) => {
+        panels.forEach(([label, panel, key]) => {
             if (!panel) return;
-            const count = label.startsWith('Usuários') ? card.querySelectorAll('.extension-list > details').length : label.startsWith('Configurar') ? card.querySelectorAll('.pause-item').length : label.startsWith('Vincular') ? card.querySelectorAll('.tenant-routes form').length : null;
+            const count = key === 'users' ? panel.querySelectorAll('.tenant-user-item').length : label.startsWith('Configurar') ? card.querySelectorAll('.pause-item').length : label.startsWith('Vincular') ? card.querySelectorAll('.tenant-routes form').length : null;
             const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-soft';
+            button.dataset.panelAction = key;
             button.textContent = count === null ? label : `${label} · ${count}`;
             button.addEventListener('click', () => open(panel, `${label} · ${summary.querySelector('strong')?.textContent || 'empresa'}`, button));
             actions.append(button);
@@ -201,10 +194,160 @@ const initializeAdminContextModals = () => {
     });
 };
 
+const initializeAdminAsyncForms = () => {
+    const admin = document.querySelector('.pbx-admin');
+    if (!admin) return;
+
+    const showFeedback = (panel, message, isError = false) => {
+        const feedback = panel?.querySelector('[data-async-feedback]');
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.hidden = !message;
+        feedback.classList.toggle('is-error', isError);
+        feedback.classList.toggle('is-success', !isError);
+    };
+
+    const updateCredentialReveal = (panel, credentials) => {
+        const reveal = panel.querySelector('[data-credential-results]');
+        if (!reveal) return;
+        if (!credentials?.length) {
+            reveal.hidden = true;
+            return;
+        }
+        panel._generatedCredentials = credentials;
+        const rows = reveal.querySelector('[data-credential-rows]');
+        rows.replaceChildren();
+        credentials.forEach((credential) => {
+            const row = document.createElement('tr');
+            [credential.name, credential.email, credential.extension, credential.role === 'tenant_admin' ? 'Administrador da empresa' : 'Agente', credential.password].forEach((value) => {
+                const cell = document.createElement('td');
+                cell.textContent = String(value ?? '');
+                if (cell.cellIndex === 4) cell.className = 'credential-secret';
+                row.append(cell);
+            });
+            rows.append(row);
+        });
+        reveal.hidden = false;
+        reveal.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+
+    const refreshUserPanel = (panel, html, credentials = []) => {
+        if (typeof html === 'string') panel.innerHTML = html;
+        const count = panel.querySelectorAll('.tenant-user-item').length;
+        const countLabel = panel.querySelector('[data-user-count]');
+        const listCount = panel.querySelector('.tenant-user-list-heading span');
+        if (countLabel) countLabel.textContent = `${count} cadastrados`;
+        if (listCount) listCount.textContent = String(count);
+        const action = panel.closest('.tenant-card')?.querySelector('[data-panel-action="users"]');
+        if (action) action.textContent = `Usuários e ramais · ${count}`;
+        updateCredentialReveal(panel, credentials);
+    };
+
+    const exportCredentials = (panel, format) => {
+        const credentials = panel._generatedCredentials || [];
+        if (!credentials.length) return;
+        const fields = ['Nome', 'Login', 'Ramal', 'Perfil', 'Senha'];
+        const rows = credentials.map((item) => [item.name, item.email, item.extension, item.role === 'tenant_admin' ? 'Administrador da empresa' : 'Agente', item.password]);
+        const content = [fields, ...rows].map((row) => row.map((value) => {
+            const text = String(value ?? '');
+            return format === 'csv' ? `"${text.replaceAll('"', '""')}"` : text.replaceAll(';', ',').replaceAll('\r', ' ').replaceAll('\n', ' ');
+        }).join(';')).join('\r\n');
+        const blob = new Blob(['\uFEFF', content], { type: format === 'csv' ? 'text/csv;charset=utf-8' : 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `credenciais-ramais-${new Date().toISOString().slice(0, 10)}.${format}`;
+        document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    };
+
+    document.addEventListener('click', (event) => {
+        const add = event.target.closest('[data-add-user]');
+        if (add) {
+            const form = add.closest('.bulk-user-form');
+            const rows = form?.querySelector('[data-user-rows]');
+            const template = form?.querySelector('[data-user-row-template]');
+            if (!rows || !template || rows.children.length >= 50) return;
+            const index = rows.children.length;
+            const row = template.content.firstElementChild.cloneNode(true);
+            row.querySelector('[data-row-number]').textContent = String(index + 1);
+            row.querySelectorAll('[data-field]').forEach((field) => { field.name = `users[${index}][${field.dataset.field}]`; });
+            rows.append(row);
+            rows.querySelectorAll('[data-remove-user]').forEach((button) => { button.disabled = rows.children.length <= 1; });
+            add.disabled = rows.children.length >= 50;
+            if (add.disabled) add.textContent = 'Máximo de 50';
+            row.querySelector('input')?.focus();
+            return;
+        }
+        const remove = event.target.closest('[data-remove-user]');
+        if (remove && !remove.disabled) {
+            const rows = remove.closest('[data-user-rows]');
+            remove.closest('[data-user-row]')?.remove();
+            rows?.querySelectorAll('[data-user-row]').forEach((row, index) => {
+                row.querySelector('[data-row-number]').textContent = String(index + 1);
+                row.querySelectorAll('input, select').forEach((field) => { field.name = `users[${index}][${field.name.match(/\[([^\]]+)\]$/)?.[1]}`; });
+                const button = row.querySelector('[data-remove-user]');
+                if (button) button.disabled = rows.children.length <= 1;
+            });
+            const addButton = rows?.closest('.bulk-user-form')?.querySelector('[data-add-user]');
+            if (addButton) { addButton.disabled = false; addButton.textContent = '＋ Adicionar linha'; }
+            return;
+        }
+        const download = event.target.closest('[data-export-credentials]');
+        if (download) exportCredentials(download.closest('[data-tenant-user-panel]'), download.dataset.exportCredentials);
+    });
+
+    document.addEventListener('submit', async (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.matches('[data-async-form]')) return;
+        event.preventDefault();
+        const kind = form.dataset.asyncForm;
+        const panel = kind === 'users' ? form.closest('[data-tenant-user-panel]') : form.closest('.tenant-pause-settings');
+        const submitter = event.submitter || form.querySelector('button[type="submit"],button:not([type])');
+        const originalLabel = submitter?.textContent;
+        if (submitter) { submitter.disabled = true; submitter.textContent = 'Salvando…'; }
+        showFeedback(panel, 'Salvando alterações…');
+        try {
+            const response = await fetch(form.action, {
+                method: form.method || 'POST',
+                body: new FormData(form),
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                const validation = Object.values(result.errors || {}).flat()[0];
+                throw new Error(validation || result.message || 'Não foi possível salvar. Revise os dados e tente novamente.');
+            }
+            if (kind === 'users') {
+                refreshUserPanel(panel, result.users_html, result.credentials || []);
+                if (form.matches('.bulk-user-form')) {
+                    form.reset();
+                    const rows = form.querySelector('[data-user-rows]');
+                    rows.querySelectorAll('[data-user-row]:not(:first-child)').forEach((row) => row.remove());
+                    rows.querySelectorAll('[data-remove-user]').forEach((button) => { button.disabled = true; });
+                }
+            } else {
+                const pauseList = panel.querySelector('.tenant-pause-list');
+                if (pauseList && typeof result.pause_html === 'string') pauseList.innerHTML = result.pause_html;
+                if (form.matches('.tenant-pause-create')) form.reset();
+                const action = panel.closest('.tenant-card')?.querySelector('[data-panel-action="pauses"]');
+                const pauseCount = panel.querySelectorAll('.pause-item').length;
+                if (action) action.textContent = `Configurar pausas · ${pauseCount}`;
+            }
+            showFeedback(panel, result.message || 'Alterações salvas.');
+        } catch (error) {
+            showFeedback(panel, error.message || 'Falha de comunicação. Sua página não foi recarregada; tente novamente.', true);
+        } finally {
+            if (submitter?.isConnected) { submitter.disabled = false; submitter.textContent = originalLabel; }
+        }
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeSystemConfirm();
     initializeAdminNavigation();
     initializeAdminContextModals();
+    initializeAdminAsyncForms();
 });
 
 const phoneInput = document.querySelector('#phone');

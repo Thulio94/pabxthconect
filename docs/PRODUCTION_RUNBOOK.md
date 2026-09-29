@@ -17,7 +17,7 @@ Exemplo: número `17 3621-4392` e TECH `8033` resultam em `8033551736214392`.
 - O navegador nunca recebe nem envia a TECH.
 - A TECH vem de `sip_trunks.tech_prefix`.
 - O vínculo e a prioridade vêm de `tenant_sip_trunks`.
-- O Asterisk deve mostrar `Dial(PJSIP/TECH${TH_DEST}@trunk-ID,40,g)`.
+- O Asterisk deve mostrar `Dial(PJSIP/TECH${TH_DEST}@trunk-ID,40,U(record-call-ID^${UNIQUEID}^ID))` para empresas com gravação habilitada; sem gravação, permanece `Dial(...,40,g)`.
 - `t1-e999` e `t3-e999` são ramais técnicos de tenants diferentes. Sempre diagnosticar o tenant observado no canal e não assumir a empresa pelo número visível do ramal.
 
 ## Serviços e nomes operacionais
@@ -164,13 +164,23 @@ separar falha de sinalização de falha de mídia.
 Fluxo obrigatório:
 
 ```text
-MixMonitor no Asterisk
+Dial com U(record-call...)
+  → Asterisk recebe resposta da perna chamada (DialStatus ANSWER / SIP 200 OK)
+pre-bridge handler no canal atendido
+  → MixMonitor inicia antes da bridge
   → /var/spool/asterisk/monitor/tenant-ID/UNIQUEID.wav
 volume pbx_recordings
   → /var/www/html/storage/app/pbx-recordings/tenant-ID/UNIQUEID.wav no Laravel
 pbx-events/RecordingReconciler
   → metadados e reprodução no painel
 ```
+
+O `MixMonitor` não deve aparecer como prioridade executada antes do `Dial`. O
+`Dial()` invoca o handler `U(record-call-ID^${UNIQUEID}^ID)` somente após a
+resposta. Tentativas que terminam em ocupado, não atendida, cancelada ou falha
+de rota não abrem nem criam WAV. O histórico AMI dessas tentativas permanece;
+histórico de chamada não significa arquivo de gravação. A mudança de código
+não apaga gravações históricas já existentes.
 
 O arquivo AMI deve permanecer `0600`. Os WAVs precisam ser `0644`, pois são criados pelo Asterisk como `root` e lidos pelo Laravel em outro contêiner. O entrypoint redefine o `umask` para `022` somente depois de proteger a credencial AMI.
 

@@ -39,9 +39,9 @@ $checks = [ordered]@{
     'Navegador produz E.164 brasileiro' = $browser.Contains('return [`55${national}`]')
     'PBX mantém destino sanitizado no servidor' = $generator.Contains('Set(TH_DEST=\${FILTER(0-9,\${EXTEN})})')
     'PBX acrescenta 55 para telefone nacional' = $generator.Contains('Set(TH_DEST=55\${TH_DEST})')
-    'Dial acrescenta TECH da rota' = $generator.Contains('Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},40,g)')
+    'Dial acrescenta TECH da rota' = $generator.Contains('Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},40,{$recordingOption})')
     'Rotas respeitam prioridade da empresa' = $generator.Contains("orderBy('tenant_sip_trunks.priority')")
-    'Gravação inicia com MixMonitor' = $generator.Contains('MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)')
+    'Gravação só inicia no handler após resposta' = $generator.Contains('U(record-call-{$tenant->id}^\${UNIQUEID}^{$tenant->id})') -and $generator.Contains('MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)') -and $tests.Contains('record-call-')
     'Trunk preserva simetria RTP/NAT' = $generator.Contains('force_rport=yes') -and $generator.Contains('rewrite_contact=yes') -and $generator.Contains('rtp_symmetric=yes')
     'Trunk anuncia IP público no SDP' = $generator.Contains('media_address={$mediaAddress}') -and $compose.Contains('PBX_PUBLIC_IP: ${PBX_PUBLIC_IP:?Defina PBX_PUBLIC_IP no Easypanel}') -and $tests.Contains('media_address=203.0.113.10')
     'Teste interno não alcança rota TECH' = $generator.Contains('exten => *900,1,NoOp(WebRTC audio check') -and $generator.Contains('same => n,Echo()')
@@ -75,7 +75,7 @@ if ($failed.Count -gt 0) {
 if ($RunTests) {
     Push-Location $repositoryRoot
     try {
-        docker compose exec -T -e APP_ENV=testing -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: app php artisan test --compact
+        docker compose exec -T -e APP_ENV=testing -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: -e CACHE_STORE=array app php artisan test --compact
         if ($LASTEXITCODE -ne 0) { throw 'Os testes PHP falharam.' }
         docker compose run --rm assets npm run build
         if ($LASTEXITCODE -ne 0) { throw 'A compilação dos assets falhou.' }

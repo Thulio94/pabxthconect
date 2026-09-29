@@ -105,11 +105,7 @@ class AmiEventProcessor
     {
         $call = $this->callFromChannel($event['Channel'] ?? '', $event['Uniqueid'] ?? null);
         if ($call && ! $call->answered_at) {
-            $call->update([
-                'answered_at' => now(),
-                'status' => 'answered',
-                'media_diagnostics' => $this->withAsteriskDiagnostic($call, 'bridge_enter'),
-            ]);
+            $this->markAnswered($call, 'bridge_enter');
         }
     }
 
@@ -121,6 +117,12 @@ class AmiEventProcessor
         }
 
         $dialStatus = strtoupper((string) ($event['DialStatus'] ?? ''));
+        if ($dialStatus === 'ANSWER') {
+            $this->markAnswered($call, 'dial_answer');
+
+            return;
+        }
+
         $status = match ($dialStatus) {
             'BUSY' => 'busy',
             'NOANSWER' => 'no_answer',
@@ -136,18 +138,14 @@ class AmiEventProcessor
     private function hangup(array $event): void
     {
         $uniqueId = $event['Uniqueid'] ?? null;
-        $linkedId = $event['Linkedid'] ?? null;
-        $call = CallRecord::query()
-            ->where(function ($query) use ($uniqueId, $linkedId) {
-                if ($uniqueId) {
-                    $query->where('asterisk_uniqueid', $uniqueId);
-                }
-                if ($linkedId) {
-                    $query->orWhere('asterisk_linkedid', $linkedId);
-                }
-            })
-            ->latest('id')
-            ->first();
+        if (! $uniqueId) {
+            return;
+        }
+
+        // A linked call has several channels (agent and one or more trunk
+        // attempts). Only the originating agent channel ends the call record;
+        // a failed trunk leg must not prevent the next failover route.
+        $call = CallRecord::query()->where('asterisk_uniqueid', $uniqueId)->first();
         if (! $call || $call->ended_at) {
             return;
         }
@@ -176,6 +174,19 @@ class AmiEventProcessor
         if ($call?->answered_at) {
             $this->finalizeRecording($call, 5);
         }
+    }
+
+    private function markAnswered(CallRecord $call, string $event): void
+    {
+        if ($call->answered_at) {
+            return;
+        }
+
+        $call->update([
+            'answered_at' => now(),
+            'status' => 'answered',
+            'media_diagnostics' => $this->withAsteriskDiagnostic($call, $event),
+        ]);
     }
 
     private function rtcp(array $event): void

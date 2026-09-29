@@ -56,12 +56,12 @@ Correção permanente:
 
 ## Contrato de gravação
 
-1. `MixMonitor` inicia no contexto da empresa antes do `Dial`.
-2. O caminho deve ser `tenant-{id}/${UNIQUEID}.wav` dentro de `${RECORDING_ROOT}`.
+1. Não iniciar `MixMonitor` antes de saber que a chamada foi atendida. O `Dial()` deve chamar um pre-bridge handler `U(...)`; esse handler roda na perna chamada após a resposta, antes da bridge.
+2. O handler só é gerado para empresas com gravação habilitada e salva em `tenant-{id}/${UNIQUEID}.wav` dentro de `${RECORDING_ROOT}`. Tentativas sem resposta não abrem/criam WAV.
 3. O volume `pbx_recordings` deve ser montado no Laravel e em `/var/spool/asterisk/monitor` no Asterisk.
-4. `pbx-events` associa `UNIQUEID` e `Linkedid` ao registro da chamada.
+4. `pbx-events` associa `UNIQUEID` e `Linkedid` ao registro da chamada. `DialEnd` com `DialStatus=ANSWER` confirma atendimento; `BridgeEnter` permanece como confirmação redundante.
 5. O navegador pode produzir WebM de contingência, mas o WAV do Asterisk é a fonte principal quando disponível.
-6. Não considerar a gravação válida apenas porque existe uma linha no banco; confirmar arquivo, tamanho, duração e reprodução.
+6. Não considerar a gravação válida apenas porque existe uma linha no banco; confirmar chamada atendida, arquivo, tamanho, duração e reprodução. Metadados de chamadas não atendidas são histórico, não gravações disponíveis.
 
 ## Contrato de provisionamento
 
@@ -122,7 +122,8 @@ Confirmar no dialplan:
 - `TH_DEST` contém exatamente `55 + DDD + número`;
 - cada `Dial` contém a TECH correta antes de `${TH_DEST}`;
 - rotas aparecem na prioridade cadastrada;
-- `MixMonitor` aparece antes de `Dial` quando a empresa grava chamadas.
+- O `Dial()` chama `U(record-call-ID^${UNIQUEID}^ID)` quando a empresa grava chamadas; `MixMonitor` aparece somente no contexto `record-call-ID`, invocado depois do atendimento.
+- Não deve haver `MixMonitor` antes do `Dial`, nem limpeza ad hoc de WAV não atendido no dialplan.
 
 ### Depois do deploy
 

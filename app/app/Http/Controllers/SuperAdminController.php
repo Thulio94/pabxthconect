@@ -14,10 +14,14 @@ use App\Services\Pbx\PbxConfigGenerator;
 use App\Services\OperatorActivityRecorder;
 use App\Services\PhoneLicenseManager;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Throwable;
 
@@ -201,11 +205,11 @@ class SuperAdminController extends Controller
         return back()->with('status', 'Rota desvinculada da empresa.');
     }
 
-    public function updateExtension(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
+    public function updateExtension(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse|JsonResponse
     {
         $request->merge(['email' => Str::lower(trim((string) $request->input('email')))]);
         $allowedRoles = $extension->user?->isSuperAdmin() ? ['superadmin'] : ['agent', 'tenant_admin'];
-        $data = $request->validate([
+        $data = $this->validateAdminInput($request, [
             'name' => ['required', 'string', 'max:120'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($extension->user_id)],
             'role' => ['required', Rule::in($allowedRoles)],
@@ -226,13 +230,27 @@ class SuperAdminController extends Controller
             $this->revokePhoneAccess($request, $extension, $licenses, $activity);
         }
         $this->provision();
+        if ($request->expectsJson()) {
+            $tenant = $extension->tenant;
+            $credentials = isset($updates['sip_secret']) ? [[
+                'name' => $extension->user?->name, 'email' => $extension->user?->email,
+                'extension' => (string) $extension->number, 'password' => $updates['sip_secret'], 'role' => $data['role'],
+            ]] : [];
+
+            return response()->json([
+                'message' => 'Usuário e ramal atualizados.',
+                'users_html' => $this->tenantUsersHtml($tenant),
+                'credentials' => $credentials,
+            ]);
+        }
         $response = back()->with('status', 'Usuário e ramal atualizados.');
 
         return isset($updates['sip_secret']) ? $response->with('new_extension_credentials', ['name' => $extension->user?->name, 'email' => $extension->user?->email, 'extension' => $extension->number, 'password' => $updates['sip_secret']]) : $response;
     }
 
-    public function destroyExtension(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
+    public function destroyExtension(Request $request, Extension $extension, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse|JsonResponse
     {
+        $tenant = $extension->tenant;
         $user = $extension->user;
         if ($user?->isSuperAdmin()) {
             return back()->withErrors(['extension' => 'O ramal do superadmin não pode ser excluído.']);
@@ -242,9 +260,104 @@ class SuperAdminController extends Controller
         $user?->delete();
         $this->provision();
 
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Usuário e ramal excluídos.', 'users_html' => $this->tenantUsersHtml($tenant)]);
+        }
+
         return back()->with('status', 'Usuário e ramal excluídos.');
     }
 
+    public function storeTenantUsers(Request $request, Tenant $tenant, ExtensionAllocator $allocator): JsonResponse
+    {
+        $users = collect($request->input('users', []))->map(function ($user) {
+            if (is_array($user) && isset($user['email'])) {
+                $user['email'] = Str::lower(trim((string) $user['email']));
+            }
+
+            return $user;
+        })->all();
+        $request->merge(['users' => $users]);
+        $data = $this->validateAdminInput($request, [
+            'users' => ['required', 'array', 'min:1', 'max:50'],
+            'users.*.name' => ['required', 'string', 'max:120'],
+            'users.*.email' => ['required', 'email', 'max:255', 'distinct:ignore_case', Rule::unique('users', 'email')],
+            'users.*.role' => ['required', Rule::in(['agent', 'tenant_admin'])],
+        ]);
+
+        try {
+            $credentials = DB::transaction(function () use ($data, $tenant, $allocator) {
+                return collect($data['users'])->map(function (array $input) use ($tenant, $allocator) {
+                    $user = User::create([
+                        'tenant_id' => $tenant->id,
+                        'name' => trim($input['name']),
+                        'email' => $input['email'],
+                        'username' => 'u'.Str::lower(Str::random(20)),
+                        'password' => Hash::make(Str::random(64)),
+                        'role' => $input['role'],
+                        'must_change_password' => false,
+                    ]);
+                    $extension = $allocator->allocate($user);
+                    $extension->update(['status' => 'active', 'provisioned_at' => now()]);
+
+                    return [
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'extension' => (string) $extension->number,
+                        'password' => $extension->sip_secret,
+                        'role' => $user->role,
+                    ];
+                })->all();
+            }, 3);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return response()->json(['message' => 'Nenhum usuário foi criado. Confira os dados e a faixa de ramais disponíveis para esta empresa.'], 422);
+        }
+
+        try {
+            $this->provision();
+            $provisioned = true;
+            $message = count($credentials) === 1 ? 'Usuário criado e ramal enviado ao PBX.' : count($credentials).' usuários criados e ramais enviados ao PBX.';
+        } catch (Throwable $exception) {
+            report($exception);
+            $provisioned = false;
+            $message = 'Os usuários foram criados, mas o PBX não confirmou a aplicação dos ramais. As credenciais foram preservadas abaixo; revise a conexão do PBX antes de liberar o acesso.';
+        }
+
+        $tenant->load(['extensions.user']);
+
+        return response()->json([
+            'message' => $message,
+            'provisioned' => $provisioned,
+            'users_html' => $this->tenantUsersHtml($tenant),
+            'credentials' => $credentials,
+        ], $provisioned ? 201 : 202);
+    }
+
+    private function tenantUsersHtml(Tenant $tenant): string
+    {
+        $tenant->load(['extensions.user']);
+
+        return view('admin.partials.tenant-users-content', compact('tenant'))->render();
+    }
+
+    private function validateAdminInput(Request $request, array $rules): array
+    {
+        try {
+            return $request->validate($rules);
+        } catch (ValidationException $exception) {
+            if (! $request->expectsJson()) {
+                throw $exception;
+            }
+
+            throw new HttpResponseException(response()->json([
+                'message' => $exception->getMessage(),
+                'errors' => $exception->errors(),
+            ], 422));
+        }
+    }
+
+    /** @deprecated Kept for backward compatibility; the administration UI creates users inside each company. */
     public function storeUser(Request $request, ExtensionAllocator $allocator): RedirectResponse
     {
         $request->merge(['email' => Str::lower(trim((string) $request->input('email')))]);

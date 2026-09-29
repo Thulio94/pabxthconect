@@ -15,11 +15,13 @@ use App\Services\PhoneLicenseManager;
 use App\Services\Pbx\CallStateReconciler;
 use App\Services\Pbx\TurnCredentialFactory;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class AdminSupervisionController extends Controller
@@ -182,7 +184,7 @@ class AdminSupervisionController extends Controller
     public function supervise(Request $request, Extension $extension, CallStateReconciler $callState): JsonResponse
     {
         $this->authorizeTenant($request, $extension->tenant_id);
-        $data = $request->validate([
+        $data = $this->validateAdminInput($request, [
             'mode' => ['required', Rule::in(['listen', 'whisper', 'barge'])],
             'supervision_session_id' => ['nullable', 'integer', Rule::exists('supervision_sessions', 'id')],
         ]);
@@ -271,9 +273,9 @@ class AdminSupervisionController extends Controller
         return response()->json(['message' => 'Supervisão encerrada.']);
     }
 
-    public function storePause(Request $request): RedirectResponse
+    public function storePause(Request $request): RedirectResponse|JsonResponse
     {
-        $data = $request->validate([
+        $data = $this->validateAdminInput($request, [
             'tenant_id' => ['required', Rule::exists('tenants', 'id')],
             'name' => ['required', 'string', 'max:80', Rule::unique('pause_reasons')->where(fn ($query) => $query->where('tenant_id', $request->input('tenant_id')))],
             'color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
@@ -281,12 +283,16 @@ class AdminSupervisionController extends Controller
         ]);
         PauseReason::create([...$data, 'is_active' => true]);
 
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Pausa cadastrada para a empresa.', 'pause_html' => $this->pauseListHtml((int) $data['tenant_id'])], 201);
+        }
+
         return back()->with('status', 'Pausa cadastrada para a empresa.');
     }
 
-    public function updatePause(Request $request, PauseReason $pauseReason): RedirectResponse
+    public function updatePause(Request $request, PauseReason $pauseReason): RedirectResponse|JsonResponse
     {
-        $data = $request->validate([
+        $data = $this->validateAdminInput($request, [
             'name' => ['required', 'string', 'max:80', Rule::unique('pause_reasons')->where(fn ($query) => $query->where('tenant_id', $pauseReason->tenant_id))->ignore($pauseReason)],
             'color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
             'max_minutes' => ['nullable', 'integer', 'between:1,480'],
@@ -294,14 +300,46 @@ class AdminSupervisionController extends Controller
         ]);
         $pauseReason->update([...$data, 'is_active' => $request->boolean('is_active')]);
 
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Pausa atualizada.', 'pause_html' => $this->pauseListHtml($pauseReason->tenant_id)]);
+        }
+
         return back()->with('status', 'Pausa atualizada.');
     }
 
-    public function destroyPause(PauseReason $pauseReason): RedirectResponse
+    public function destroyPause(Request $request, PauseReason $pauseReason): RedirectResponse|JsonResponse
     {
+        $tenantId = $pauseReason->tenant_id;
         $pauseReason->delete();
 
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Pausa excluída.', 'pause_html' => $this->pauseListHtml($tenantId)]);
+        }
+
         return back()->with('status', 'Pausa excluída.');
+    }
+
+    private function pauseListHtml(int $tenantId): string
+    {
+        $pauses = PauseReason::query()->where('tenant_id', $tenantId)->orderBy('name')->get();
+
+        return view('admin.partials.pause-list', compact('pauses'))->render();
+    }
+
+    private function validateAdminInput(Request $request, array $rules): array
+    {
+        try {
+            return $request->validate($rules);
+        } catch (ValidationException $exception) {
+            if (! $request->expectsJson()) {
+                throw $exception;
+            }
+
+            throw new HttpResponseException(response()->json([
+                'message' => $exception->getMessage(),
+                'errors' => $exception->errors(),
+            ], 422));
+        }
     }
 
     private function supervisorCredentials(Extension $extension): array

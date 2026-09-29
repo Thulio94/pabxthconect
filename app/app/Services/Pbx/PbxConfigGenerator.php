@@ -76,23 +76,23 @@ class PbxConfigGenerator
 
     private function dialplan(): string
     {
-        $tenants = Tenant::query()->with(['trunks' => fn ($query) => $query->wherePivot('is_active', true)->where('sip_trunks.is_active', true)->orderBy('tenant_sip_trunks.priority'), 'extensions'])->get();
+        $tenants = Tenant::query()->with(['trunks' => fn ($query) => $query->wherePivot('is_active', true)->where('sip_trunks.is_active', true)->orderBy('tenant_sip_trunks.priority'), 'extensions.user'])->get();
         $tenantContexts = $tenants->map(function (Tenant $tenant) {
             if ($tenant->trunks->isEmpty()) {
                 return "[tenant-{$tenant->id}]\nexten => _X.,1,NoOp(No outbound route for tenant {$tenant->id})\n same => n,Congestion(10)\n same => n,Return()\n\n";
             }
 
-            $recording = $tenant->record_calls
-                ? " same => n,Set(CALL_RECORDING_FILE=tenant-{$tenant->id}/\${UNIQUEID}.wav)\n same => n,MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)\n"
-                : '';
-            $routes = $tenant->trunks->values()->map(function (SipTrunk $trunk, int $index) {
+            $recordingOption = $tenant->record_calls
+                ? "U(record-call-{$tenant->id}^\${UNIQUEID}^{$tenant->id})"
+                : 'g';
+            $routes = $tenant->trunks->values()->map(function (SipTrunk $trunk, int $index) use ($recordingOption) {
                 $tech = $this->value($trunk->tech_prefix ?? '');
                 $trunkName = 'trunk-'.$trunk->id;
                 $next = 'route-'.($index + 1);
                 $label = $index === 0 ? '' : "({$next})";
 
                 return " same => n{$label},NoOp(Outbound route {$trunk->id} with configured TECH)\n"
-                    ." same => n,Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},40,g)\n"
+                    ." same => n,Dial(PJSIP/{$tech}\${TH_DEST}@{$trunkName},40,{$recordingOption})\n"
                     ." same => n,GotoIf(\$[\"\${DIALSTATUS}\"=\"ANSWER\"]?done)\n";
             })->implode('');
 
@@ -102,12 +102,11 @@ class PbxConfigGenerator
                 ." same => n,Set(TH_DEST=\${FILTER(0-9,\${EXTEN})})\n"
                 ." same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=10]?Set(TH_DEST=55\${TH_DEST}))\n"
                 ." same => n,ExecIf(\$[\${LEN(\${TH_DEST})}=11]?Set(TH_DEST=55\${TH_DEST}))\n"
-                .$recording.$routes
+                .$routes
                 .($tenant->record_calls
-                    // Keep the Asterisk mixed WAV after an answered call. The
-                    // browser recording is only a legacy fallback and must
-                    // never replace or race the server-side MixMonitor file.
-                    ? " same => n(done),StopMixMonitor()\n same => n,GotoIf(\$[\"\${DIALSTATUS}\"=\"ANSWER\"]?keep-recording)\n same => n,System(rm -f \"\${RECORDING_ROOT}/\${CALL_RECORDING_FILE}\")\n same => n(keep-recording),Return()\n\n"
+                    // Dial's U handler runs on the called channel only after it
+                    // answers, before bridging. Unanswered attempts never open a WAV.
+                    ? " same => n(done),Return()\n\n[record-call-{$tenant->id}]\nexten => s,1,Set(CALL_RECORDING_FILE=tenant-{$tenant->id}/\${ARG1}.wav)\n same => n,MixMonitor(\${RECORDING_ROOT}/\${CALL_RECORDING_FILE},ab)\n same => n,Return()\n\n"
                     : " same => n(done),Return()\n\n");
         })->implode('');
         $allExtensions = $tenants->flatMap(fn (Tenant $tenant) => $tenant->extensions);
