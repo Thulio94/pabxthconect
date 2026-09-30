@@ -222,7 +222,7 @@ const initializeAdminAsyncForms = () => {
         rows.replaceChildren();
         credentials.forEach((credential) => {
             const row = document.createElement('tr');
-            [credential.name, credential.email, credential.extension, credential.role === 'tenant_admin' ? 'Administrador da empresa' : 'Agente', credential.password].forEach((value) => {
+            [credential.name, credential.login || credential.email, credential.extension || '—', credential.role === 'tenant_admin' ? 'Administrador da empresa' : credential.role === 'supervisor' ? 'Supervisor' : 'Agente', credential.password].forEach((value) => {
                 const cell = document.createElement('td');
                 cell.textContent = String(value ?? '');
                 if (cell.cellIndex === 4) cell.className = 'credential-secret';
@@ -250,7 +250,7 @@ const initializeAdminAsyncForms = () => {
         const credentials = panel._generatedCredentials || [];
         if (!credentials.length) return;
         const fields = ['Nome', 'Login', 'Ramal', 'Perfil', 'Senha'];
-        const rows = credentials.map((item) => [item.name, item.email, item.extension, item.role === 'tenant_admin' ? 'Administrador da empresa' : 'Agente', item.password]);
+        const rows = credentials.map((item) => [item.name, item.login || item.email, item.extension || '—', item.role === 'tenant_admin' ? 'Administrador da empresa' : item.role === 'supervisor' ? 'Supervisor' : 'Agente', item.password]);
         const content = [fields, ...rows].map((row) => row.map((value) => {
             const text = String(value ?? '');
             return format === 'csv' ? `"${text.replaceAll('"', '""')}"` : text.replaceAll(';', ',').replaceAll('\r', ' ').replaceAll('\n', ' ');

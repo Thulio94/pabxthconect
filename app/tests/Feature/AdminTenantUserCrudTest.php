@@ -30,21 +30,51 @@ class AdminTenantUserCrudTest extends TestCase
             'users' => [
                 ['name' => 'Agente Leste', 'email' => ' LESTE@example.test ', 'role' => 'agent'],
                 ['name' => 'Gestora Norte', 'email' => 'norte@example.test', 'role' => 'tenant_admin'],
+                ['name' => 'Supervisora Sul', 'email' => 'sul@example.test', 'role' => 'supervisor'],
             ],
         ]);
 
         $response->assertCreated()
             ->assertJsonPath('provisioned', true)
-            ->assertJsonCount(2, 'credentials')
+            ->assertJsonCount(3, 'credentials')
             ->assertJsonPath('credentials.0.email', 'leste@example.test')
             ->assertJsonPath('credentials.0.extension', '999')
             ->assertJsonPath('credentials.1.extension', '1000')
             ->assertJsonPath('credentials.1.role', 'tenant_admin')
+            ->assertJsonPath('credentials.2.login', 'sul@example.test')
+            ->assertJsonPath('credentials.2.extension', null)
+            ->assertJsonPath('credentials.2.role', 'supervisor')
             ->assertJsonStructure(['users_html', 'message']);
 
-        $this->assertDatabaseCount('users', 3);
+        $this->assertDatabaseCount('users', 4);
         $this->assertDatabaseCount('extensions', 2);
         $this->assertStringContainsString('Usuários cadastrados', $response->json('users_html'));
+        $this->assertStringContainsString('Supervisora Sul', $response->json('users_html'));
+        $this->assertTrue(User::query()->where('email', 'sul@example.test')->firstOrFail()->must_change_password);
+    }
+
+    public function test_superadmin_can_create_a_supervisor_without_allocating_a_phone_extension_or_reprovisioning_asterisk(): void
+    {
+        $tenant = $this->tenant();
+        $this->mock(PbxConfigGenerator::class, fn ($mock) => $mock->shouldNotReceive('generate'));
+
+        $response = $this->actingAs($this->superadmin())->postJson("/administracao/empresas/{$tenant->id}/usuarios", [
+            'users' => [['name' => 'Supervisora', 'email' => 'supervisora@example.test', 'role' => 'supervisor']],
+        ])->assertCreated()->assertJsonPath('credentials.0.extension', null)
+            ->assertJsonPath('credentials.0.login', 'supervisora@example.test')
+            ->assertJsonPath('credentials.0.role', 'supervisor')
+            ->assertJsonPath('provisioned', true);
+
+        $supervisor = User::query()->where('email', 'supervisora@example.test')->firstOrFail();
+        $this->assertSame('supervisora@example.test', $supervisor->username);
+        $this->assertTrue($supervisor->must_change_password);
+        $this->assertDatabaseMissing('extensions', ['user_id' => $supervisor->id]);
+
+        $this->post('/administracao/sair')->assertRedirect('/administracao/entrar');
+        $this->post('/administracao/entrar', [
+            'username' => $response->json('credentials.0.login'),
+            'password' => $response->json('credentials.0.password'),
+        ])->assertRedirect('/administracao/primeiro-acesso');
     }
 
     public function test_batch_validation_rejects_duplicate_email_before_creating_any_user(): void
@@ -130,6 +160,7 @@ class AdminTenantUserCrudTest extends TestCase
             ->assertSee('Criar usuários e ramais', false)
             ->assertSee('data-add-user', false)
             ->assertSee('data-export-credentials="csv"', false)
+            ->assertSee('<option value="supervisor">Supervisor</option>', false)
             ->assertSee('data-async-form="pauses"', false)
             ->assertSee('id="usuarios-ramais"', false)
             ->assertDontSee('Criar credencial', false);

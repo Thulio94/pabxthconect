@@ -36,6 +36,7 @@ class SuperAdminController extends Controller
         return view('admin.index', [
             'tenants' => Tenant::query()->with([
                 'trunks', 'extensions.user',
+                'users' => fn ($query) => $query->where('role', 'supervisor')->orderBy('name'),
                 'phoneLicenseLeases' => fn ($query) => $query->where('last_seen_at', '>=', $activeLeaseCutoff)->with(['user', 'extension']),
                 'pauseReasons' => fn ($query) => $query->orderBy('name'),
             ])->orderBy('name')->get(),
@@ -290,29 +291,32 @@ class SuperAdminController extends Controller
             'users' => ['required', 'array', 'min:1', 'max:50'],
             'users.*.name' => ['required', 'string', 'max:120'],
             'users.*.email' => ['required', 'email', 'max:255', 'distinct:ignore_case', Rule::unique('users', 'email')],
-            'users.*.role' => ['required', Rule::in(['agent', 'tenant_admin'])],
+            'users.*.role' => ['required', Rule::in(['agent', 'tenant_admin', 'supervisor'])],
         ]);
 
         try {
             $credentials = DB::transaction(function () use ($data, $tenant, $allocator) {
                 return collect($data['users'])->map(function (array $input) use ($tenant, $allocator) {
+                    $isSupervisor = $input['role'] === 'supervisor';
+                    $initialPassword = $isSupervisor ? Str::random(32).'aA1!' : Str::random(64);
                     $user = User::create([
                         'tenant_id' => $tenant->id,
                         'name' => trim($input['name']),
                         'email' => $input['email'],
-                        'username' => 'u'.Str::lower(Str::random(20)),
-                        'password' => Hash::make(Str::random(64)),
+                        'username' => $isSupervisor ? $input['email'] : 'u'.Str::lower(Str::random(20)),
+                        'password' => Hash::make($initialPassword),
                         'role' => $input['role'],
-                        'must_change_password' => false,
+                        'must_change_password' => $isSupervisor,
                     ]);
-                    $extension = $allocator->allocate($user);
-                    $extension->update(['status' => 'active', 'provisioned_at' => now()]);
+                    $extension = $isSupervisor ? null : $allocator->allocate($user);
+                    $extension?->update(['status' => 'active', 'provisioned_at' => now()]);
 
                     return [
                         'name' => $user->name,
                         'email' => $user->email,
-                        'extension' => (string) $extension->number,
-                        'password' => $extension->sip_secret,
+                        'login' => $user->email,
+                        'extension' => $extension ? (string) $extension->number : null,
+                        'password' => $extension?->sip_secret ?? $initialPassword,
                         'role' => $user->role,
                     ];
                 })->all();
@@ -323,14 +327,22 @@ class SuperAdminController extends Controller
             return response()->json(['message' => 'Nenhum usuário foi criado. Confira os dados e a faixa de ramais disponíveis para esta empresa.'], 422);
         }
 
-        try {
-            $this->provision();
+        $requiresPbxProvisioning = collect($credentials)->contains(fn (array $credential) => $credential['extension'] !== null);
+        if ($requiresPbxProvisioning) {
+            try {
+                $this->provision();
+                $provisioned = true;
+                $message = count($credentials) === 1 ? 'Usuário criado e ramal enviado ao PBX.' : count($credentials).' usuários criados e ramais enviados ao PBX.';
+            } catch (Throwable $exception) {
+                report($exception);
+                $provisioned = false;
+                $message = 'Os usuários foram criados, mas o PBX não confirmou a aplicação dos ramais. As credenciais foram preservadas abaixo; revise a conexão do PBX antes de liberar o acesso.';
+            }
+        } else {
             $provisioned = true;
-            $message = count($credentials) === 1 ? 'Usuário criado e ramal enviado ao PBX.' : count($credentials).' usuários criados e ramais enviados ao PBX.';
-        } catch (Throwable $exception) {
-            report($exception);
-            $provisioned = false;
-            $message = 'Os usuários foram criados, mas o PBX não confirmou a aplicação dos ramais. As credenciais foram preservadas abaixo; revise a conexão do PBX antes de liberar o acesso.';
+            $message = count($credentials) === 1
+                ? 'Supervisor criado. O acesso é somente ao acompanhamento e às gravações da empresa; nenhum ramal foi provisionado.'
+                : count($credentials).' usuários criados. Supervisores não recebem ramal; ramais dos demais perfis foram enviados ao PBX.';
         }
 
         $tenant->load(['extensions.user']);
@@ -345,7 +357,10 @@ class SuperAdminController extends Controller
 
     private function tenantUsersHtml(Tenant $tenant): string
     {
-        $tenant->load(['extensions.user']);
+        $tenant->load([
+            'extensions.user',
+            'users' => fn ($query) => $query->where('role', 'supervisor')->orderBy('name'),
+        ]);
 
         return view('admin.partials.tenant-users-content', compact('tenant'))->render();
     }

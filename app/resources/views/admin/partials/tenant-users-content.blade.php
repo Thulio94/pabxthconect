@@ -1,18 +1,18 @@
 <div class="user-manager-head">
-    <div><p class="mini-label">USUÁRIOS E RAMAIS</p><p class="muted">O login é o e-mail. O ramal é escolhido automaticamente dentro da faixa desta empresa.</p></div>
-    <span class="user-count" data-user-count>{{ $tenant->extensions->count() }} cadastrados</span>
+    <div><p class="mini-label">USUÁRIOS E RAMAIS</p><p class="muted">Agentes recebem ramal automaticamente. Supervisores acessam somente o acompanhamento e as gravações, sem ramal.</p></div>
+    <span class="user-count" data-user-count>{{ $tenant->extensions->count() + $tenant->users->count() }} cadastrados</span>
 </div>
 <div class="async-feedback" data-async-feedback role="status" aria-live="polite" hidden></div>
 
 <form method="POST" action="{{ route('admin.tenants.users.store', $tenant) }}" class="bulk-user-form" data-async-form="users">
     @csrf
-    <div class="bulk-user-heading"><div><h3>Adicionar usuários</h3><p class="muted">Crie um ou vários ramais na mesma operação. Senhas geradas aparecem uma única vez ao concluir.</p></div><button class="button button-soft" type="button" data-add-user>＋ Adicionar linha</button></div>
+            <div class="bulk-user-heading"><div><h3>Adicionar usuários</h3><p class="muted">Crie agentes, administradores ou supervisores. Senhas geradas aparecem uma única vez ao concluir.</p></div><button class="button button-soft" type="button" data-add-user>＋ Adicionar linha</button></div>
     <div class="bulk-user-rows" data-user-rows>
         <fieldset class="bulk-user-row" data-user-row>
             <legend>Usuário <span data-row-number>1</span></legend>
             <label>Nome<input name="users[0][name]" maxlength="120" autocomplete="name" required></label>
             <label>E-mail de acesso<input name="users[0][email]" type="email" maxlength="255" autocomplete="email" required></label>
-            <label>Perfil<select name="users[0][role]"><option value="agent">Agente</option><option value="tenant_admin">Administrador da empresa</option></select></label>
+            <label>Perfil<select name="users[0][role]"><option value="agent">Agente</option><option value="tenant_admin">Administrador da empresa</option><option value="supervisor">Supervisor</option></select></label>
             <button class="remove-user-row" type="button" data-remove-user aria-label="Remover usuário" disabled>×</button>
         </fieldset>
     </div>
@@ -21,7 +21,7 @@
             <legend>Usuário <span data-row-number></span></legend>
             <label>Nome<input data-field="name" maxlength="120" autocomplete="name" required></label>
             <label>E-mail de acesso<input data-field="email" type="email" maxlength="255" autocomplete="email" required></label>
-            <label>Perfil<select data-field="role"><option value="agent">Agente</option><option value="tenant_admin">Administrador da empresa</option></select></label>
+            <label>Perfil<select data-field="role"><option value="agent">Agente</option><option value="tenant_admin">Administrador da empresa</option><option value="supervisor">Supervisor</option></select></label>
             <button class="remove-user-row" type="button" data-remove-user aria-label="Remover usuário">×</button>
         </fieldset>
     </template>
@@ -34,7 +34,12 @@
 </section>
 
 <div class="tenant-user-list">
-    <div class="tenant-user-list-heading"><h3>Usuários cadastrados</h3><span>{{ $tenant->extensions->count() }}</span></div>
+    <div class="tenant-user-list-heading"><h3>Usuários cadastrados</h3><span>{{ $tenant->extensions->count() + $tenant->users->count() }}</span></div>
+    @foreach($tenant->users as $supervisor)
+        <div class="tenant-user-item tenant-supervisor-item" data-supervisor-id="{{ $supervisor->id }}">
+            <summary><span class="user-extension-number">SV</span><span class="tenant-user-identity"><b>{{ $supervisor->name }}</b><small>{{ $supervisor->email }}</small></span><span class="extension-state active">Supervisor</span><span class="user-row-edit">Sem ramal</span></summary>
+        </div>
+    @endforeach
     @forelse($tenant->extensions as $extension)
         <details class="tenant-user-item" data-extension-id="{{ $extension->id }}">
             <summary><span class="user-extension-number">{{ $extension->number }}</span><span class="tenant-user-identity"><b>{{ $extension->user?->name ?? 'Sem usuário' }}</b><small>{{ $extension->user?->email ?? 'Login não configurado' }}</small></span><span class="extension-state {{ $extension->status }}">{{ $extension->status === 'active' ? 'Ativo' : 'Desativado' }}</span><span class="user-row-edit">Editar⌄</span></summary>
@@ -52,6 +57,8 @@
             </div>
         </details>
     @empty
+        @if($tenant->users->isEmpty())
         <div class="empty-cell">Ainda não há usuários nesta empresa. Adicione-os pelo formulário acima.</div>
+        @endif
     @endforelse
 </div>
