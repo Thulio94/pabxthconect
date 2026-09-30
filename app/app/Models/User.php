@@ -46,6 +46,16 @@ class User extends Authenticatable
         return $this->role === 'tenant_admin';
     }
 
+    public function isSupervisor(): bool
+    {
+        return $this->role === 'supervisor';
+    }
+
+    public function isAgent(): bool
+    {
+        return $this->role === 'agent';
+    }
+
     public function canManageOperation(): bool
     {
         return $this->isSuperAdmin() || $this->isTenantAdmin();

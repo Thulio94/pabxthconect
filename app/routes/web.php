@@ -1,16 +1,18 @@
 <?php
 
-use App\Http\Controllers\AgentDashboardController;
-use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\AdminRecordingController;
 use App\Http\Controllers\AdminSupervisionController;
+use App\Http\Controllers\AgentDashboardController;
 use App\Http\Controllers\AgentPresenceController;
+use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\PasswordChangeController;
-use App\Http\Controllers\PhoneCallController;
+use App\Http\Controllers\CompanyUserController;
 use App\Http\Controllers\PbxRecordingController;
+use App\Http\Controllers\PhoneCallController;
 use App\Http\Controllers\SipSessionController;
 use App\Http\Controllers\SuperAdminController;
+use App\Http\Controllers\SupervisorController;
 use Illuminate\Support\Facades\Route;
 
 Route::redirect('/', '/entrar');
@@ -34,9 +36,16 @@ Route::middleware('sip.session')->group(function () {
     Route::delete('/telefone/pausa', [AgentPresenceController::class, 'resume'])->name('phone.presence.resume');
 });
 
+Route::prefix('supervisor')->name('supervisor.')->middleware(['auth', 'password.changed', 'supervisor'])->group(function () {
+    Route::get('/', [SupervisorController::class, 'index'])->name('dashboard');
+    Route::get('/agentes', [SupervisorController::class, 'agents'])->name('agents');
+    Route::get('/gravacoes', [AdminRecordingController::class, 'supervisorIndex'])->name('recordings.index');
+    Route::get('/gravacoes/{recording}/ouvir', [AdminRecordingController::class, 'supervisorPlay'])->name('recordings.play');
+});
+
 Route::prefix('administracao')->group(function () {
     Route::middleware('guest')->group(function () {
-        Route::get('/entrar', fn () => redirect()->route('phone.login'))->name('login');
+        Route::get('/entrar', [AuthenticatedSessionController::class, 'create'])->name('login');
         Route::post('/entrar', [AuthenticatedSessionController::class, 'store'])->name('login.store');
     });
 
@@ -55,6 +64,11 @@ Route::prefix('administracao')->group(function () {
         Route::post('/acompanhamento/ramais/{extension}/deslogar', [AdminSupervisionController::class, 'forceLogout'])->name('admin.supervision.logout');
         Route::post('/acompanhamento/ramais/{extension}', [AdminSupervisionController::class, 'supervise'])->name('admin.supervision.start');
         Route::patch('/acompanhamento/sessoes/{supervisionSession}', [AdminSupervisionController::class, 'finish'])->name('admin.supervision.finish');
+    });
+
+    Route::middleware(['auth', 'password.changed', 'tenant.admin'])->group(function () {
+        Route::get('/equipe/usuarios', [CompanyUserController::class, 'index'])->name('admin.company-users.index');
+        Route::post('/equipe/usuarios', [CompanyUserController::class, 'store'])->name('admin.company-users.store');
     });
 
     Route::middleware(['auth', 'password.changed', 'superadmin'])->group(function () {

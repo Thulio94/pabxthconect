@@ -23,6 +23,14 @@ class EnsureSipSession
                 : redirect()->route('admin.supervision.index');
         }
 
+        if ($request->user()?->isSupervisor()) {
+            $request->session()->forget('sip_agent');
+
+            return $request->expectsJson()
+                ? response()->json(['message' => 'O perfil supervisor possui acesso somente ao acompanhamento e às gravações.'], 403)
+                : redirect()->route('supervisor.dashboard');
+        }
+
         $agent = $request->session()->get('sip_agent');
         if (! $request->user() || ! $agent || (int) ($agent['user_id'] ?? 0) !== $request->user()->id) {
             $request->session()->forget('sip_agent');

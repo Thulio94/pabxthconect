@@ -36,12 +36,30 @@ class AuthenticatedSessionController extends Controller
             return back()->withErrors(['username' => 'Login ou senha inválidos.'])->onlyInput('username');
         }
 
+        $user = $request->user();
+        $canUseAdminPortal = $user->isSuperAdmin() || $user->isTenantAdmin() || $user->isSupervisor();
+        $tenantIsActive = $user->isSuperAdmin() || ($user->tenant?->status === 'active');
+        if (! $canUseAdminPortal || ! $tenantIsActive) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+            RateLimiter::hit($key, 60);
+
+            return back()->withErrors(['username' => 'Login ou senha inválidos.'])->onlyInput('username');
+        }
+
         RateLimiter::clear($key);
         $request->session()->regenerate();
 
-        return $request->user()->must_change_password
-            ? redirect()->route('password.change.edit')
-            : redirect()->intended($request->user()->isSuperAdmin() ? route('admin.index') : route('admin.supervision.index'));
+        if ($user->must_change_password) {
+            return redirect()->route('password.change.edit');
+        }
+
+        return match ($user->role) {
+            'superadmin' => redirect()->route('admin.index'),
+            'tenant_admin' => redirect()->route('admin.supervision.index'),
+            default => redirect()->route('supervisor.dashboard'),
+        };
     }
 
     public function destroy(Request $request): RedirectResponse

@@ -455,12 +455,137 @@ const initializeAdminManagementForms = () => {
     });
 };
 
+const initializeCompanyUserForm = () => {
+    const form = document.querySelector('[data-company-user-form]');
+    if (!form) return;
+
+    const panel = form.closest('[data-company-user-panel]');
+    const feedback = panel?.querySelector('[data-company-user-feedback]');
+    const reveal = panel?.querySelector('[data-company-user-credentials]');
+    const rowTarget = reveal?.querySelector('[data-company-user-credential]');
+    const setFeedback = (message, isError = false) => {
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.hidden = !message;
+        feedback.classList.toggle('is-error', isError);
+        feedback.classList.toggle('is-success', !isError);
+    };
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submitter = event.submitter || form.querySelector('button[type="submit"]');
+        const originalText = submitter?.textContent;
+        if (submitter) { submitter.disabled = true; submitter.textContent = 'Criando…'; }
+        setFeedback('Criando usuário…');
+        if (reveal) reveal.hidden = true;
+
+        try {
+            const response = await fetch(form.action, {
+                method: form.method || 'POST',
+                body: new FormData(form),
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                const validation = Object.values(result.errors || {}).flat()[0];
+                throw new Error(validation || result.message || 'Não foi possível criar o usuário.');
+            }
+
+            const credential = result.credentials?.[0];
+            if (!credential || !rowTarget) throw new Error('O usuário foi criado, mas a confirmação de credenciais não veio completa. Contate o administrador antes de tentar novamente.');
+
+            rowTarget.replaceChildren();
+            [credential.name, credential.login || credential.email, credential.extension || '—', credential.role === 'supervisor' ? 'Supervisor' : 'Agente', credential.password].forEach((value, index) => {
+                const cell = document.createElement('td');
+                cell.textContent = String(value ?? '—');
+                if (index === 4) cell.className = 'credential-secret';
+                rowTarget.append(cell);
+            });
+            reveal.hidden = false;
+            form.reset();
+            setFeedback(result.message || 'Usuário criado.');
+        } catch (error) {
+            setFeedback(error.message || 'Falha de comunicação. Tente novamente.', true);
+        } finally {
+            if (submitter?.isConnected) { submitter.disabled = false; submitter.textContent = originalText; }
+        }
+    });
+};
+
+const initializeSupervisorDashboard = () => {
+    const config = window.__SUPERVISOR_CONFIG__;
+    const tableBody = document.querySelector('#supervisorAgents');
+    if (!config || !tableBody) return;
+
+    const onlineCount = document.querySelector('#supervisorOnlineCount');
+    const offlineCount = document.querySelector('#supervisorOfflineCount');
+    const updated = document.querySelector('#supervisorUpdated');
+    const error = document.querySelector('#supervisorAgentsError');
+    const refreshButton = document.querySelector('#refreshSupervisorAgents');
+    let loading = false;
+
+    const refresh = async () => {
+        if (loading) return;
+        loading = true;
+        if (refreshButton) refreshButton.disabled = true;
+        try {
+            const response = await fetch(config.agentsUrl, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message || 'Falha ao consultar os agentes.');
+
+            const fragment = document.createDocumentFragment();
+            if (!result.agents?.length) {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 4;
+                cell.className = 'empty-cell';
+                cell.textContent = 'Nenhum agente cadastrado nesta empresa.';
+                row.append(cell);
+                fragment.append(row);
+            } else {
+                result.agents.forEach((agent) => {
+                    const row = document.createElement('tr');
+                    [agent.name, agent.email, agent.extension || '—'].forEach((value) => {
+                        const cell = document.createElement('td');
+                        cell.textContent = String(value ?? '—');
+                        row.append(cell);
+                    });
+                    const statusCell = document.createElement('td');
+                    const status = document.createElement('span');
+                    status.className = `supervisor-status ${agent.status === 'online' ? 'online' : 'offline'}`;
+                    status.textContent = agent.status_label || (agent.status === 'online' ? 'Online' : 'Offline');
+                    statusCell.append(status);
+                    row.append(statusCell);
+                    fragment.append(row);
+                });
+            }
+            tableBody.replaceChildren(fragment);
+            if (onlineCount) onlineCount.textContent = String(result.online ?? 0);
+            if (offlineCount) offlineCount.textContent = String(result.offline ?? 0);
+            if (updated) updated.querySelector('span').textContent = `Atualizado às ${new Date(result.generated_at).toLocaleTimeString('pt-BR')}`;
+            if (error) error.hidden = true;
+        } catch {
+            if (error) error.hidden = false;
+        } finally {
+            loading = false;
+            if (refreshButton) refreshButton.disabled = false;
+        }
+    };
+
+    refreshButton?.addEventListener('click', refresh);
+    window.setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 15000);
+    refresh();
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeSystemConfirm();
     initializeAdminNavigation();
     initializeAdminContextModals();
     initializeAdminAsyncForms();
     initializeAdminManagementForms();
+    initializeCompanyUserForm();
+    initializeSupervisorDashboard();
 });
 
 const phoneInput = document.querySelector('#phone');

@@ -31,6 +31,12 @@ class PasswordChangeController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->route('admin.index')->with('status', 'Senha atualizada. Sua sessão está protegida.');
+        $destination = match ($request->user()->role) {
+            'superadmin' => 'admin.index',
+            'supervisor' => 'supervisor.dashboard',
+            default => 'admin.supervision.index',
+        };
+
+        return redirect()->route($destination)->with('status', 'Senha atualizada. Sua sessão está protegida.');
     }
 }

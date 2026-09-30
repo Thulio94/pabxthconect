@@ -25,6 +25,10 @@ class SipSessionController extends Controller
             return redirect()->route('admin.supervision.index');
         }
 
+        if ($request->user()?->isSupervisor()) {
+            return redirect()->route('supervisor.dashboard');
+        }
+
         return $request->session()->has('sip_agent') ? redirect()->route('phone.dashboard') : view('auth.login');
     }
 
@@ -46,6 +50,11 @@ class SipSessionController extends Controller
 
         $user = User::query()->with(['tenant', 'pbxExtension'])
             ->whereRaw('LOWER(email) = ?', [$email])->first();
+
+        if ($user?->isSupervisor()) {
+            return back()->withErrors(['email' => 'Esta conta acessa o acompanhamento pelo portal administrativo.'])->onlyInput('email');
+        }
+
         $extension = $user?->pbxExtension;
         $validPassword = $user && (Hash::check($data['password'], $user->password)
             || ($extension && hash_equals($extension->sip_secret, (string) $data['password'])));

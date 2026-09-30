@@ -1,9 +1,11 @@
 <?php
 
+use App\Http\Middleware\EnsureOperationAdmin;
 use App\Http\Middleware\EnsurePasswordChanged;
 use App\Http\Middleware\EnsureSipSession;
 use App\Http\Middleware\EnsureSuperAdmin;
-use App\Http\Middleware\EnsureOperationAdmin;
+use App\Http\Middleware\EnsureSupervisor;
+use App\Http\Middleware\EnsureTenantAdmin;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -25,10 +27,12 @@ return Application::configure(basePath: dirname(__DIR__))
             'sip.session' => EnsureSipSession::class,
             'superadmin' => EnsureSuperAdmin::class,
             'operation.admin' => EnsureOperationAdmin::class,
+            'supervisor' => EnsureSupervisor::class,
+            'tenant.admin' => EnsureTenantAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
-            fn (Request $request) => $request->is('api/*'),
+            fn (Request $request) => $request->expectsJson() || $request->is('api/*'),
         );
     })->create();

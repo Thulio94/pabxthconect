@@ -1,13 +1,13 @@
-@extends('layouts.app', ['title' => 'Superadmin | Tela do Agente - Thconect'])
+@extends('layouts.app', ['title' => 'Acesso administrativo | Thconect'])
 
 @section('body')
 <main class="auth-shell single-panel admin-auth">
     <section class="auth-card-wrap">
         <form method="POST" action="{{ route('login.store') }}" class="auth-card">
             @csrf
-            <p class="eyebrow">CONFIGURAÇÃO RESTRITA</p>
-            <h2>Acesso do Superadmin</h2>
-            <p class="muted">Gerencie as empresas, seus tokens de integração e as políticas de gravação.</p>
+            <p class="eyebrow">ÁREA ADMINISTRATIVA</p>
+            <h2>Acesso administrativo</h2>
+            <p class="muted">Acesse o acompanhamento e as ferramentas autorizadas para o seu perfil.</p>
             @if ($errors->any())
                 <div class="alert alert-error">{{ $errors->first() }}</div>
             @endif
