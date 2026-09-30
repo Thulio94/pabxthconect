@@ -52,7 +52,10 @@ class SipSessionController extends Controller
             ->whereRaw('LOWER(email) = ?', [$email])->first();
 
         if ($user?->isSupervisor()) {
-            return back()->withErrors(['email' => 'Esta conta acessa o acompanhamento pelo portal administrativo.'])->onlyInput('email');
+            return back()
+                ->withErrors(['email' => 'Esta conta acessa o acompanhamento pelo portal administrativo.'])
+                ->with('admin_portal_suggestion', true)
+                ->onlyInput('email');
         }
 
         $extension = $user?->pbxExtension;

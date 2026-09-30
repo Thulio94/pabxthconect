@@ -513,71 +513,6 @@ const initializeCompanyUserForm = () => {
     });
 };
 
-const initializeSupervisorDashboard = () => {
-    const config = window.__SUPERVISOR_CONFIG__;
-    const tableBody = document.querySelector('#supervisorAgents');
-    if (!config || !tableBody) return;
-
-    const onlineCount = document.querySelector('#supervisorOnlineCount');
-    const offlineCount = document.querySelector('#supervisorOfflineCount');
-    const updated = document.querySelector('#supervisorUpdated');
-    const error = document.querySelector('#supervisorAgentsError');
-    const refreshButton = document.querySelector('#refreshSupervisorAgents');
-    let loading = false;
-
-    const refresh = async () => {
-        if (loading) return;
-        loading = true;
-        if (refreshButton) refreshButton.disabled = true;
-        try {
-            const response = await fetch(config.agentsUrl, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.message || 'Falha ao consultar os agentes.');
-
-            const fragment = document.createDocumentFragment();
-            if (!result.agents?.length) {
-                const row = document.createElement('tr');
-                const cell = document.createElement('td');
-                cell.colSpan = 4;
-                cell.className = 'empty-cell';
-                cell.textContent = 'Nenhum agente cadastrado nesta empresa.';
-                row.append(cell);
-                fragment.append(row);
-            } else {
-                result.agents.forEach((agent) => {
-                    const row = document.createElement('tr');
-                    [agent.name, agent.email, agent.extension || '—'].forEach((value) => {
-                        const cell = document.createElement('td');
-                        cell.textContent = String(value ?? '—');
-                        row.append(cell);
-                    });
-                    const statusCell = document.createElement('td');
-                    const status = document.createElement('span');
-                    status.className = `supervisor-status ${agent.status === 'online' ? 'online' : 'offline'}`;
-                    status.textContent = agent.status_label || (agent.status === 'online' ? 'Online' : 'Offline');
-                    statusCell.append(status);
-                    row.append(statusCell);
-                    fragment.append(row);
-                });
-            }
-            tableBody.replaceChildren(fragment);
-            if (onlineCount) onlineCount.textContent = String(result.online ?? 0);
-            if (offlineCount) offlineCount.textContent = String(result.offline ?? 0);
-            if (updated) updated.querySelector('span').textContent = `Atualizado às ${new Date(result.generated_at).toLocaleTimeString('pt-BR')}`;
-            if (error) error.hidden = true;
-        } catch {
-            if (error) error.hidden = false;
-        } finally {
-            loading = false;
-            if (refreshButton) refreshButton.disabled = false;
-        }
-    };
-
-    refreshButton?.addEventListener('click', refresh);
-    window.setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 15000);
-    refresh();
-};
-
 document.addEventListener('DOMContentLoaded', () => {
     initializeSystemConfirm();
     initializeAdminNavigation();
@@ -585,7 +520,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeAdminAsyncForms();
     initializeAdminManagementForms();
     initializeCompanyUserForm();
-    initializeSupervisorDashboard();
 });
 
 const phoneInput = document.querySelector('#phone');
@@ -2561,6 +2495,7 @@ const supervisionConfig = window.__SUPERVISION_CONFIG__;
 if (supervisionConfig) {
     delete window.__SUPERVISION_CONFIG__;
     JsSIP.debug.disable('JsSIP:*');
+    const readOnly = supervisionConfig.readOnly === true;
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
     const tenantSelect = document.querySelector('#supervisionTenant');
     const tableBody = document.querySelector('#supervisionAgents');
@@ -2600,9 +2535,12 @@ if (supervisionConfig) {
         ? { iceServers: supervisionConfig.iceServers, iceTransportPolicy: 'all' }
         : undefined;
 
-    const socket = new JsSIP.WebSocketInterface(supervisionConfig.websocketUrl);
-    const ua = new JsSIP.UA({ uri: supervisionConfig.uri, password: supervisionConfig.password, sockets: [socket], register: true, session_timers: false });
-    supervisionConfig.password = null;
+    let ua = null;
+    if (!readOnly) {
+        const socket = new JsSIP.WebSocketInterface(supervisionConfig.websocketUrl);
+        ua = new JsSIP.UA({ uri: supervisionConfig.uri, password: supervisionConfig.password, sockets: [socket], register: true, session_timers: false });
+        supervisionConfig.password = null;
+    }
     const request = async (url, options = {}) => {
         const headers = { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, ...(options.headers || {}) };
         if (options.body) headers['Content-Type'] = 'application/json';
@@ -2612,6 +2550,10 @@ if (supervisionConfig) {
         return payload;
     };
     const notify = (message) => {
+        if (!toast) {
+            if (readOnly && connection?.querySelector('span')) connection.querySelector('span').textContent = message;
+            return;
+        }
         clearTimeout(toastTimer); toast.textContent = message; toast.hidden = false;
         toastTimer = setTimeout(() => { toast.hidden = true; }, 5000);
     };
@@ -2646,7 +2588,7 @@ if (supervisionConfig) {
         tableBody.replaceChildren();
         document.querySelector('#agentTotal').textContent = agents.filter((agent) => agent.state !== 'offline').length;
         document.querySelectorAll('[data-state-counter]').forEach((counter) => { counter.querySelector('b').textContent = agents.filter((agent) => agent.state === counter.dataset.stateCounter).length; });
-        if (!visible.length) { const row = node('tr'); const cell = node('td', 'empty-cell', 'Nenhum agente encontrado.'); cell.colSpan = 7; row.append(cell); tableBody.append(row); return; }
+        if (!visible.length) { const row = node('tr'); const cell = node('td', 'empty-cell', 'Nenhum agente encontrado.'); cell.colSpan = readOnly ? 6 : 7; row.append(cell); tableBody.append(row); return; }
         visible.forEach((agent) => {
             const row = node('tr');
             const identityCell = node('td'); const identity = node('div', 'agent-identity'); identity.append(node('b', '', `${agent.number} · ${agent.name}`), node('small', '', agent.email || '')); identityCell.append(identity);
@@ -2655,11 +2597,14 @@ if (supervisionConfig) {
             const callsCell = node('td', 'metric-cell', String(agent.calls_today)); callsCell.title = `${agent.answered_today} atendidas`;
             const talkCell = node('td', 'metric-cell', duration(agent.talk_seconds));
             const pauseCell = node('td', 'metric-cell', duration(agent.pause_seconds));
-            const actionCell = node('td'); const actions = node('div', 'supervision-actions');
-            const details = node('button', 'supervision-action details', 'Ver dia'); details.type = 'button'; details.addEventListener('click', () => openOperatorDay(agent)); actions.append(details);
-            [['listen','Ouvir'],['whisper','Sussurrar'],['barge','Entrar']].forEach(([mode,label]) => { const button = node('button', `supervision-action ${mode}`, label); button.type = 'button'; button.disabled = agent.state !== 'talking' || !ua.isRegistered() || startingSpy; button.addEventListener('click', () => startSupervision(agent, mode)); actions.append(button); });
-            const logout = node('button', 'supervision-action force-logout', 'Deslogar'); logout.type = 'button'; logout.disabled = !agent.can_force_logout; logout.addEventListener('click', () => forceLogoutAgent(agent, logout)); actions.append(logout);
-            actionCell.append(actions); row.append(identityCell, statusCell, loggedCell, callsCell, talkCell, pauseCell, actionCell); tableBody.append(row);
+            row.append(identityCell, statusCell, loggedCell, callsCell, talkCell, pauseCell);
+            if (!readOnly) {
+                const actionCell = node('td'); const actions = node('div', 'supervision-actions');
+                const details = node('button', 'supervision-action details', 'Ver dia'); details.type = 'button'; details.addEventListener('click', () => openOperatorDay(agent)); actions.append(details);
+                [['listen','Ouvir'],['whisper','Sussurrar'],['barge','Entrar']].forEach(([mode,label]) => { const button = node('button', `supervision-action ${mode}`, label); button.type = 'button'; button.disabled = agent.state !== 'talking' || !ua.isRegistered() || startingSpy; button.addEventListener('click', () => startSupervision(agent, mode)); actions.append(button); });
+                const logout = node('button', 'supervision-action force-logout', 'Deslogar'); logout.type = 'button'; logout.disabled = !agent.can_force_logout; logout.addEventListener('click', () => forceLogoutAgent(agent, logout)); actions.append(logout);
+                actionCell.append(actions); row.append(actionCell);
+            }
         });
     };
 
@@ -2731,10 +2676,11 @@ if (supervisionConfig) {
             if (payload.degraded && payload.warning) notify(payload.warning);
             const currentTarget = activeSpy && agents.find((agent) => agent.id === activeSpy.agent.id);
             if (currentTarget && activeSpy) activeSpy.agent = currentTarget;
-            if (currentTarget?.state === 'talking' && currentTarget.call?.id && activeSpy && !activeSession && !startingSpy && currentTarget.call.id !== activeSpy.callId && ua.isRegistered()) {
+            if (currentTarget?.state === 'talking' && currentTarget.call?.id && activeSpy && !activeSession && !startingSpy && currentTarget.call.id !== activeSpy.callId && ua?.isRegistered()) {
                 startSupervision(currentTarget, activeSpy.mode, { reconnect: true });
             }
             renderSpyConsole(); render();
+            if (readOnly && connection?.querySelector('span')) connection.querySelector('span').textContent = `Atualizado às ${new Date(payload.generated_at).toLocaleTimeString('pt-BR')}`;
         }
         catch (error) { notify(`Não foi possível atualizar os agentes: ${error.message}`); }
     };
@@ -2913,9 +2859,11 @@ if (supervisionConfig) {
         }
     };
 
-    ua.on('registered', () => { connection.className = 'supervision-connection registered'; connection.querySelector('span').textContent = 'Ramal supervisor conectado'; render(); });
-    ua.on('registrationFailed', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Falha no ramal supervisor'; render(); });
-    ua.on('disconnected', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Reconectando supervisão'; render(); });
+    if (ua) {
+        ua.on('registered', () => { connection.className = 'supervision-connection registered'; connection.querySelector('span').textContent = 'Ramal supervisor conectado'; render(); });
+        ua.on('registrationFailed', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Falha no ramal supervisor'; render(); });
+        ua.on('disconnected', () => { connection.className = 'supervision-connection error'; connection.querySelector('span').textContent = 'Reconectando supervisão'; render(); });
+    }
     tenantSelect.addEventListener('change', loadAgents); search.addEventListener('input', render); document.querySelector('#refreshSupervision').addEventListener('click', loadAgents);
     document.querySelector('#operatorDayClose')?.addEventListener('click', closeOperatorDay); dayBackdrop?.addEventListener('click', closeOperatorDay); dayDate?.addEventListener('change', loadOperatorDay);
     document.querySelectorAll('[data-spy-mode]').forEach((button) => button.addEventListener('click', () => {
@@ -2924,6 +2872,6 @@ if (supervisionConfig) {
     spyOpenDetails?.addEventListener('click', () => { if (activeSpy) openOperatorDay(activeSpy.agent); });
     spyExit?.addEventListener('click', closeSpy);
     const poll = setInterval(loadAgents, 5000); const timer = setInterval(render, 1000);
-    window.addEventListener('beforeunload', () => { clearInterval(poll); clearInterval(timer); activeSession?.terminate(); ua.stop(); });
-    ua.start(); loadAgents();
+    window.addEventListener('beforeunload', () => { clearInterval(poll); clearInterval(timer); activeSession?.terminate(); ua?.stop(); });
+    ua?.start(); loadAgents();
 }

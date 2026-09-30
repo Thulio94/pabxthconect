@@ -17,7 +17,14 @@
             <h2>Entrar no telefone</h2>
             <p class="muted">Informe seu e-mail e a senha entregues pelo administrador.</p>
             @if(session('status'))<div class="alert alert-success">{{ session('status') }}</div>@endif
-            @if ($errors->any())<div class="alert alert-error">{{ $errors->first() }}</div>@endif
+            @if ($errors->any())
+                <div class="alert alert-error">
+                    <p>{{ $errors->first() }}</p>
+                    @if (session('admin_portal_suggestion'))
+                        <a class="button button-primary" href="{{ route('login') }}">Ir para o acesso administrativo</a>
+                    @endif
+                </div>
+            @endif
             <label>E-mail<input name="email" type="email" value="{{ old('email') }}" placeholder="nome@empresa.com.br" autocomplete="username" required autofocus></label>
             <label>Senha do ramal<input name="password" type="password" autocomplete="current-password" required></label>
             <button class="button button-primary button-full" type="submit">Entrar com segurança</button>

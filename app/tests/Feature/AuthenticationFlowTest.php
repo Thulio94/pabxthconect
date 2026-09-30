@@ -115,10 +115,30 @@ class AuthenticationFlowTest extends TestCase
             ->postJson('/telefone/chamadas', ['direction' => 'outgoing', 'remote_number' => '81999999999'])->assertForbidden();
     }
 
+    public function test_supervisor_phone_login_error_offers_administrative_portal_link(): void
+    {
+        $this->withoutMiddleware(PreventRequestForgery::class);
+        $supervisor = User::factory()->create([
+            'email' => 'supervisor@empresa.local',
+            'password' => Hash::make('Gestor123'),
+            'role' => 'supervisor',
+            'must_change_password' => false,
+        ]);
+
+        $this->followingRedirects()
+            ->from('/entrar')
+            ->post('/entrar', ['email' => $supervisor->email, 'password' => 'Gestor123'])
+            ->assertOk()
+            ->assertSee('Esta conta acessa o acompanhamento pelo portal administrativo.')
+            ->assertSee('Ir para o acesso administrativo')
+            ->assertSee('href="'.route('login').'"', false);
+    }
+
     private function extension(): Extension
     {
         $tenant = Tenant::create(['name' => 'Empresa Teste', 'slug' => 'empresa-teste', 'status' => 'active', 'record_calls' => true]);
         $user = User::factory()->create(['tenant_id' => $tenant->id]);
+
         return Extension::create(['tenant_id' => $tenant->id, 'user_id' => $user->id, 'number' => 999, 'sip_username' => "t{$tenant->id}-e999", 'sip_secret' => 'SenhaSIP#Segura', 'status' => 'active', 'secret_rotated_at' => now()]);
     }
 }

@@ -5,10 +5,12 @@ namespace Tests\Feature;
 use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\ExtensionPresence;
+use App\Models\PauseReason;
 use App\Models\PhoneLicenseLease;
 use App\Models\Recording;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Pbx\CallStateReconciler;
 use App\Services\Pbx\PbxConfigGenerator;
 use App\Services\PhoneLicenseManager;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -58,25 +60,43 @@ class SupervisorRoleTest extends TestCase
         ])->assertRedirect('/supervisor');
     }
 
-    public function test_supervisor_can_only_see_its_company_agents_and_only_online_when_phone_lease_and_presence_are_fresh(): void
+    public function test_supervisor_sees_full_live_statuses_only_for_its_company(): void
     {
         $tenant = $this->tenant('Empresa do supervisor');
         $otherTenant = $this->tenant('Outra empresa');
         $supervisor = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'supervisor', 'must_change_password' => false]);
-        $onlineAgent = $this->agent($tenant, 'Agente Online', 999);
-        $offlineAgent = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'agent', 'name' => 'Agente Offline']);
+        $talkingAgent = $this->agent($tenant, 'Agente Falando', 999);
+        $callingAgent = $this->agent($tenant, 'Agente Chamando', 1000);
+        $pausedAgent = $this->agent($tenant, 'Agente em pausa', 1001);
+        $availableAgent = $this->agent($tenant, 'Agente Disponível', 1002);
+        $offlineAgent = $this->agent($tenant, 'Agente Offline', 1003);
         $foreignAgent = $this->agent($otherTenant, 'Agente Estrangeiro', 999);
-        $this->markOnline($onlineAgent);
+        $this->markOnline($talkingAgent);
+        $this->markOnline($callingAgent);
+        $this->markOnline($pausedAgent);
+        $this->markOnline($availableAgent);
         $this->markOnline($foreignAgent);
+        $pause = PauseReason::create(['tenant_id' => $tenant->id, 'name' => 'Almoço', 'color' => '#e89c00', 'is_active' => true]);
+        $pausedAgent->pbxExtension->presence()->update(['state' => 'paused', 'pause_reason_id' => $pause->id]);
+        CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $talkingAgent->pbxExtension->id, 'to_number' => '5581999999999', 'status' => 'answered', 'started_at' => now()->subMinute(), 'answered_at' => now()->subSeconds(50)]);
+        CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $callingAgent->pbxExtension->id, 'to_number' => '5581888888888', 'status' => 'ringing', 'started_at' => now()->subSeconds(10)]);
+        $this->mock(CallStateReconciler::class)->shouldReceive('reconcile')->once();
 
-        $response = $this->actingAs($supervisor)->getJson('/supervisor/agentes')->assertOk();
+        $response = $this->actingAs($supervisor)->getJson('/supervisor/agentes?tenant_id='.$otherTenant->id)->assertOk();
 
-        $response->assertJsonCount(2, 'agents')
-            ->assertJsonPath('online', 1)
+        $response->assertJsonCount(5, 'agents')
+            ->assertJsonPath('online', 4)
             ->assertJsonPath('offline', 1)
-            ->assertJsonFragment(['name' => 'Agente Online', 'status_label' => 'Online'])
-            ->assertJsonFragment(['name' => 'Agente Offline', 'status_label' => 'Offline'])
+            ->assertJsonFragment(['name' => 'Agente Falando', 'state' => 'talking', 'status_label' => 'Falando'])
+            ->assertJsonFragment(['name' => 'Agente Chamando', 'state' => 'calling', 'status_label' => 'Chamando'])
+            ->assertJsonFragment(['name' => 'Agente em pausa', 'state' => 'paused', 'status_label' => 'Almoço'])
+            ->assertJsonFragment(['name' => 'Agente Disponível', 'state' => 'available', 'status_label' => 'Disponível'])
+            ->assertJsonFragment(['name' => 'Agente Offline', 'state' => 'offline', 'status_label' => 'Offline'])
             ->assertJsonMissing(['name' => 'Agente Estrangeiro']);
+
+        $talkingPayload = collect($response->json('agents'))->firstWhere('name', 'Agente Falando');
+        $this->assertArrayNotHasKey('call', $talkingPayload);
+        $this->assertArrayNotHasKey('can_force_logout', $talkingPayload);
     }
 
     public function test_supervisor_has_no_phone_or_telephony_actions_and_does_not_consume_a_license(): void
@@ -86,7 +106,12 @@ class SupervisorRoleTest extends TestCase
         $agent = $this->agent($tenant, 'Operadora', 999);
 
         $this->actingAs($supervisor)->get('/supervisor')
-            ->assertOk()->assertSee('Acompanhamento da equipe')->assertDontSee('JsSIP')->assertDontSee('ChanSpy');
+            ->assertOk()->assertViewIs('admin.supervision')->assertSee('Acompanhamento de agentes')
+            ->assertSee('data-state-counter="talking"', false)->assertSee('data-state-counter="calling"', false)
+            ->assertSee('data-state-counter="available"', false)->assertSee('data-state-counter="paused"', false)
+            ->assertSee('data-state-counter="offline"', false)->assertSee('id="supervisionAgents"', false)
+            ->assertDontSee('Ações')->assertDontSee('Ouvir')->assertDontSee('Sussurrar')->assertDontSee('Entrar na ligação')
+            ->assertDontSee('sip:', false)->assertDontSee('spyConsole', false);
         $this->get('/telefone')->assertRedirect('/supervisor');
         $this->postJson('/telefone/chamadas', ['direction' => 'outgoing', 'remote_number' => '5581999999999'])->assertForbidden();
         $this->postJson("/administracao/acompanhamento/ramais/{$agent->pbxExtension->id}", ['mode' => 'listen'])->assertForbidden();
