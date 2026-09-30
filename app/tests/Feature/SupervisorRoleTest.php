@@ -121,6 +121,25 @@ class SupervisorRoleTest extends TestCase
         $this->assertDatabaseCount('phone_license_leases', 0);
     }
 
+    public function test_shared_supervision_renderer_inserts_agent_rows_for_admin_and_read_only_views(): void
+    {
+        $script = file_get_contents(resource_path('js/app.js'));
+
+        $this->assertIsString($script);
+        $supervisionStart = strpos($script, 'if (supervisionConfig) {');
+        $rendererStart = $supervisionStart === false ? false : strpos($script, 'const render = () => {', $supervisionStart);
+        $rendererEnd = strpos($script, 'const sortableColumns = [', $rendererStart ?: 0);
+        $renderer = $rendererStart !== false && $rendererEnd !== false
+            ? substr($script, $rendererStart, $rendererEnd - $rendererStart)
+            : '';
+
+        $this->assertMatchesRegularExpression(
+            '/if \(!readOnly\) \{.*?row\.append\(actionCell\);\s*\}\s*tableBody\.append\(row\);/s',
+            $renderer,
+            'The shared supervision renderer must append every agent row outside the admin-only actions block.'
+        );
+    }
+
     public function test_supervisor_recordings_are_limited_to_answered_agent_calls_in_the_same_tenant(): void
     {
         Storage::fake('local');

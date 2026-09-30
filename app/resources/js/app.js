@@ -2605,6 +2605,7 @@ if (supervisionConfig) {
                 const logout = node('button', 'supervision-action force-logout', 'Deslogar'); logout.type = 'button'; logout.disabled = !agent.can_force_logout; logout.addEventListener('click', () => forceLogoutAgent(agent, logout)); actions.append(logout);
                 actionCell.append(actions); row.append(actionCell);
             }
+            tableBody.append(row);
         });
     };
 
