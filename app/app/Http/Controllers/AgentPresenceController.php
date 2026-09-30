@@ -6,16 +6,24 @@ use App\Models\Extension;
 use App\Models\ExtensionPresence;
 use App\Models\PauseReason;
 use App\Services\OperatorActivityRecorder;
+use App\Services\PhoneLicenseManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class AgentPresenceController extends Controller
 {
-    public function heartbeat(Request $request, OperatorActivityRecorder $activity): JsonResponse
+    public function heartbeat(Request $request, OperatorActivityRecorder $activity, PhoneLicenseManager $licenses): JsonResponse
     {
         $agent = $request->session()->get('sip_agent');
         $extension = Extension::findOrFail($agent['extension_id']);
+        if ($licenses->requiresLicense($request->user()) && ! $licenses->heartbeat(
+            $request->user(),
+            $extension,
+            (string) ($agent['license_session_key'] ?? $request->session()->getId()),
+        )) {
+            return response()->json(['message' => 'A sessão de telefonia expirou por falta de atividade.', 'session_ended' => true], 401);
+        }
         $data = $request->validate(['state' => ['nullable', Rule::in(['available', 'offline'])]]);
         $presence = ExtensionPresence::firstOrNew(['extension_id' => $extension->id]);
         $nextState = $data['state'] ?? 'available';
@@ -27,6 +35,7 @@ class AgentPresenceController extends Controller
         $presence->heartbeat_at = now();
         $presence->save();
         $activity->heartbeat($extension, $request->user(), $agent['operator_session_id'] ?? null);
+
         return response()->json(['state' => $presence->state, 'pause_reason_id' => $presence->pause_reason_id, 'state_since' => $presence->state_since?->toIso8601String()]);
     }
 
@@ -36,9 +45,12 @@ class AgentPresenceController extends Controller
         $extension = Extension::findOrFail($agent['extension_id']);
         $data = $request->validate(['pause_reason_id' => ['required', 'integer']]);
         $pause = PauseReason::query()->whereKey($data['pause_reason_id'])->where('tenant_id', $extension->tenant_id)->where('is_active', true)->first();
-        if (! $pause) return response()->json(['message' => 'Esta pausa não pertence à empresa do agente.'], 422);
+        if (! $pause) {
+            return response()->json(['message' => 'Esta pausa não pertence à empresa do agente.'], 422);
+        }
         ExtensionPresence::updateOrCreate(['extension_id' => $extension->id], ['pause_reason_id' => $pause->id, 'state' => 'paused', 'state_since' => now(), 'heartbeat_at' => now()]);
         $activity->startPause($extension, $request->user(), $pause);
+
         return response()->json(['message' => 'Pausa iniciada.']);
     }
 
@@ -48,6 +60,7 @@ class AgentPresenceController extends Controller
         $extension = Extension::findOrFail($agent['extension_id']);
         ExtensionPresence::updateOrCreate(['extension_id' => $extension->id], ['pause_reason_id' => null, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
         $activity->closePause($extension, $request->user());
+
         return response()->json(['message' => 'Agente disponível.']);
     }
 }

@@ -8,14 +8,16 @@ use App\Models\OperatorActivityLog;
 use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
 use App\Models\PauseReason;
+use App\Models\PhoneLicenseLease;
 use App\Models\SupervisionSession;
 use App\Models\Tenant;
 use App\Services\OperatorActivityRecorder;
-use App\Services\PhoneLicenseManager;
 use App\Services\Pbx\CallStateReconciler;
 use App\Services\Pbx\TurnCredentialFactory;
-use Illuminate\Http\JsonResponse;
+use App\Services\PhoneLicenseLeaseReaper;
+use App\Services\PhoneLicenseManager;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -43,10 +45,13 @@ class AdminSupervisionController extends Controller
         ]);
     }
 
-    public function agents(Request $request, CallStateReconciler $callState): JsonResponse
+    public function agents(Request $request, CallStateReconciler $callState, PhoneLicenseLeaseReaper $licenseReaper, PhoneLicenseManager $licenses): JsonResponse
     {
         $tenantId = (int) $request->validate(['tenant_id' => ['required', Rule::exists('tenants', 'id')]])['tenant_id'];
         $this->authorizeTenant($request, $tenantId);
+        $licenseReaper->reap($tenantId);
+        $onlineExtensionIds = PhoneLicenseLease::query()->where('tenant_id', $tenantId)
+            ->where('last_seen_at', '>=', $licenses->staleBefore())->pluck('extension_id')->flip();
         [$dayStart, $dayEnd] = $this->operationDayBounds();
         $staleBefore = now()->subSeconds(45);
         $presenceAvailable = Schema::hasColumns('extension_presences', ['extension_id', 'state', 'state_since', 'heartbeat_at']);
@@ -84,14 +89,14 @@ class AdminSupervisionController extends Controller
             }) : collect();
 
         $supervisorUserId = (int) $request->user()->id;
-        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses, $supervisorUserId) {
+        $agents = $extensions->map(function (Extension $extension) use ($presenceAvailable, $staleBefore, $dayStart, $dayEnd, $calls, $sessions, $pauses, $supervisorUserId, $onlineExtensionIds) {
             $agentCalls = $calls->get($extension->id, collect());
-            $call = $agentCalls->whereNull('ended_at')->filter(function (CallRecord $item) {
+            $presence = $presenceAvailable ? $extension->presence : null;
+            $online = $onlineExtensionIds->has($extension->id) && ($presence?->heartbeat_at?->gte($staleBefore) ?? false);
+            $call = $online ? $agentCalls->whereNull('ended_at')->filter(function (CallRecord $item) {
                 return $item->status === 'answered'
                     || (in_array($item->status, ['dialing', 'ringing'], true) && $item->started_at?->gte(now()->subSeconds(40)));
-            })->sortByDesc('id')->first();
-            $presence = $presenceAvailable ? $extension->presence : null;
-            $online = $presence?->heartbeat_at?->gte($staleBefore) ?? false;
+            })->sortByDesc('id')->first() : null;
             $state = $call ? ($call->status === 'answered' ? 'talking' : 'calling') : ($online ? ($presence->state === 'paused' ? 'paused' : 'available') : 'offline');
             $since = $state === 'offline' ? null : ($call?->answered_at ?? $call?->started_at ?? $presence?->state_since ?? $presence?->heartbeat_at);
             if ($since?->lt($dayStart)) {

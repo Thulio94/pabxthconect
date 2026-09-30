@@ -432,3 +432,26 @@
 }
 
 @media (prefers-reduced-motion:reduce) { .app-shell,#adminSidebar,#adminSidebar .sidebar-toggle span,#adminSidebar .side-chevron { transition:none; } }
+/* Feedback for actions submitted without navigating away from the admin screen. */
+.admin-action-toast {
+    position: fixed;
+    z-index: 1200;
+    top: 1.25rem;
+    right: 1.25rem;
+    max-width: min(28rem, calc(100vw - 2.5rem));
+    padding: .9rem 1.15rem;
+    border: 1px solid #c9d9f1;
+    border-radius: .85rem;
+    background: #fff;
+    color: #17335d;
+    box-shadow: 0 14px 38px #142b4a24;
+}
+
+.admin-action-toast.is-error {
+    border-color: #f1b8bf;
+    color: #a3263a;
+}
+
+.admin-action-toast[hidden] {
+    display: none;
+}

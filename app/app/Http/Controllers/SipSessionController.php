@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
 use App\Models\Extension;
 use App\Models\ExtensionPresence;
+use App\Models\User;
 use App\Services\OperatorActivityRecorder;
 use App\Services\PhoneLicenseException;
+use App\Services\PhoneLicenseLeaseReaper;
 use App\Services\PhoneLicenseManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -20,12 +21,14 @@ class SipSessionController extends Controller
 {
     public function create(Request $request): View|RedirectResponse
     {
-        if ($request->user()?->isTenantAdmin()) return redirect()->route('admin.supervision.index');
+        if ($request->user()?->isTenantAdmin()) {
+            return redirect()->route('admin.supervision.index');
+        }
 
         return $request->session()->has('sip_agent') ? redirect()->route('phone.dashboard') : view('auth.login');
     }
 
-    public function store(Request $request, OperatorActivityRecorder $activity, PhoneLicenseManager $licenses): RedirectResponse
+    public function store(Request $request, OperatorActivityRecorder $activity, PhoneLicenseManager $licenses, PhoneLicenseLeaseReaper $licenseReaper): RedirectResponse
     {
         $data = $request->validate([
             'email' => ['required', 'email', 'max:255'],
@@ -52,6 +55,10 @@ class SipSessionController extends Controller
             return back()->withErrors(['email' => 'E-mail ou senha inválidos.'])->onlyInput('email');
         }
 
+        if ($licenses->requiresLicense($user)) {
+            $licenseReaper->reap($extension->tenant_id);
+        }
+
         if ($licenses->requiresLicense($user) && $licenses->hasActiveLease($extension)) {
             return back()->withErrors(['email' => 'Este agente já está conectado à tela de telefonia em outro computador.'])->onlyInput('email');
         }
@@ -62,6 +69,7 @@ class SipSessionController extends Controller
 
         if ($user->isTenantAdmin()) {
             $request->session()->forget('sip_agent');
+
             return redirect()->route('admin.supervision.index');
         }
 
@@ -108,7 +116,7 @@ class SipSessionController extends Controller
         if ($request->user() && $agent && ($extension = Extension::find($agent['extension_id'] ?? null))) {
             $activity->logout($extension, $request->user(), $agent['operator_session_id'] ?? null);
             if ($licenses->requiresLicense($request->user())) {
-                $licenses->releaseForExtension($extension);
+                $licenses->releaseForSession($extension, (string) ($agent['license_session_key'] ?? $request->session()->getId()));
             }
             ExtensionPresence::updateOrCreate(['extension_id' => $extension->id], ['pause_reason_id' => null, 'state' => 'offline', 'state_since' => now(), 'heartbeat_at' => now()]);
         }

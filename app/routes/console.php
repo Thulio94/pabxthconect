@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('pbx:recordings:purge')->dailyAt('03:15')->withoutOverlapping();
 Schedule::command('pbx:recordings:sync')->everyMinute()->withoutOverlapping();
+Schedule::command('pbx:licenses:reap-stale')->everyMinute()->withoutOverlapping();

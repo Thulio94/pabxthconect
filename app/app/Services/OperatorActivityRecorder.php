@@ -9,6 +9,8 @@ use App\Models\OperatorSession;
 use App\Models\PauseReason;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class OperatorActivityRecorder
 {
@@ -87,6 +89,45 @@ class OperatorActivityRecorder
             ['administrator_user_id' => $administrator->id],
             $now
         );
+    }
+
+    public function expirePhoneSession(Extension $extension, User $user, ?string $sessionKey, Carbon $lastSeenAt): void
+    {
+        if (Schema::hasTable('operator_sessions')) {
+            $sessions = OperatorSession::query()->where('extension_id', $extension->id)->whereNull('logged_out_at');
+            if ($sessionKey) {
+                $sessions->where('session_key', $sessionKey);
+            }
+            $sessions->update(['logged_out_at' => $lastSeenAt, 'updated_at' => now()]);
+        }
+
+        if (Schema::hasTable('operator_pause_sessions')) {
+            OperatorPauseSession::query()->where('extension_id', $extension->id)->whereNull('ended_at')
+                ->get()->each(function (OperatorPauseSession $pause) use ($lastSeenAt): void {
+                    $endedAt = $lastSeenAt->greaterThan($pause->started_at) ? $lastSeenAt : $pause->started_at;
+                    $pause->update(['ended_at' => $endedAt, 'updated_at' => now()]);
+                });
+        }
+
+        $presence = Schema::hasTable('extension_presences') ? $extension->presence : null;
+        if ($presence && $presence->heartbeat_at?->lt($lastSeenAt->copy()->addSeconds(PhoneLicenseManager::HEARTBEAT_TIMEOUT_SECONDS))) {
+            $presence->update([
+                'pause_reason_id' => null,
+                'state' => 'offline',
+                'state_since' => $lastSeenAt,
+            ]);
+        }
+
+        if (Schema::hasTable('operator_activity_logs')) {
+            $this->log(
+                $extension,
+                $user,
+                'session_expired',
+                'Sessão encerrada automaticamente por falta de comunicação com o telefone.',
+                [],
+                $lastSeenAt,
+            );
+        }
     }
 
     public function startPause(Extension $extension, User $user, PauseReason $pause): void

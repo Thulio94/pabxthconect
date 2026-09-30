@@ -118,6 +118,9 @@ const initializeAdminContextModals = () => {
     const admin = document.querySelector('.pbx-admin');
     if (!admin) return;
 
+    document.querySelector('.context-modal')?.remove();
+    document.body.classList.remove('modal-open');
+
     document.querySelector('.pbx-rail')?.setAttribute('id', 'visao-geral');
     const createPanels = document.querySelectorAll('.pbx-form-grid > .panel');
     ['nova-rota', 'nova-empresa'].forEach((id, index) => createPanels[index]?.setAttribute('id', id));
@@ -298,6 +301,7 @@ const initializeAdminAsyncForms = () => {
 
     document.addEventListener('submit', async (event) => {
         const form = event.target;
+        if (event.defaultPrevented) return;
         if (!(form instanceof HTMLFormElement) || !form.matches('[data-async-form]')) return;
         event.preventDefault();
         const kind = form.dataset.asyncForm;
@@ -343,11 +347,120 @@ const initializeAdminAsyncForms = () => {
     });
 };
 
+const initializeAdminManagementForms = () => {
+    if (!document.querySelector('.pbx-admin')) return;
+
+    let toastTimer = null;
+    const notify = (message, isError = false) => {
+        let toast = document.querySelector('#adminActionToast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'adminActionToast';
+            toast.className = 'admin-action-toast';
+            toast.setAttribute('role', 'status');
+            toast.setAttribute('aria-live', 'polite');
+            document.body.append(toast);
+        }
+        toast.textContent = message;
+        toast.classList.toggle('is-error', isError);
+        toast.hidden = false;
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => { toast.hidden = true; }, 5000);
+    };
+
+    const showError = async (message, opener) => {
+        if (window.ThconectDialog?.alert) {
+            await window.ThconectDialog.alert({ title: 'Ação não concluída', message, confirmLabel: 'Entendi', opener });
+        } else {
+            notify(message, true);
+        }
+    };
+
+    document.addEventListener('submit', async (event) => {
+        const form = event.target;
+        if (event.defaultPrevented || !(form instanceof HTMLFormElement)) return;
+        if (!form.closest('.pbx-admin') && !form.closest('.context-modal')) return;
+        if (form.matches('[data-async-form]') || !['post', 'put', 'patch', 'delete'].includes(form.method.toLowerCase())) return;
+
+        event.preventDefault();
+        if (form.dataset.requestPending === 'true') return;
+        form.dataset.requestPending = 'true';
+
+        const submitter = event.submitter || form.querySelector('button[type="submit"],button:not([type])');
+        const originalText = submitter?.textContent;
+        const scrollPosition = window.scrollY;
+        if (submitter) {
+            submitter.disabled = true;
+            submitter.textContent = 'Processando…';
+        }
+
+        try {
+            let body;
+            try {
+                body = new FormData(form, submitter || undefined);
+            } catch {
+                body = new FormData(form);
+            }
+
+            const response = await fetch(form.action || window.location.href, {
+                method: form.method.toUpperCase(),
+                body,
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json, text/html;q=0.9', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const contentType = response.headers.get('content-type') || '';
+            if (!response.ok) {
+                let message = 'Não foi possível concluir a ação. Revise os dados e tente novamente.';
+                if (contentType.includes('application/json')) {
+                    const result = await response.json();
+                    message = Object.values(result.errors || {}).flat()[0] || result.message || message;
+                }
+                throw new Error(message);
+            }
+
+            if (contentType.includes('application/json')) {
+                const result = await response.json();
+                if (result.message) notify(result.message);
+                return;
+            }
+
+            const html = await response.text();
+            const nextDocument = new DOMParser().parseFromString(html, 'text/html');
+            const nextAdmin = nextDocument.querySelector('.pbx-admin');
+            const currentAdmin = document.querySelector('.pbx-admin');
+            if (!nextAdmin || !currentAdmin) {
+                if (response.redirected && response.url) {
+                    window.location.assign(response.url);
+                    return;
+                }
+                throw new Error('O servidor respondeu, mas não foi possível atualizar o painel.');
+            }
+
+            const actionError = nextAdmin.querySelector('.alert-error')?.textContent?.trim();
+            const actionMessage = nextAdmin.querySelector('.alert-success')?.textContent?.trim() || 'Alterações salvas.';
+            currentAdmin.innerHTML = nextAdmin.innerHTML;
+            window.scrollTo(0, scrollPosition);
+            initializeAdminContextModals();
+            if (actionError) await showError(actionError);
+            else notify(actionMessage);
+        } catch (error) {
+            await showError(error.message || 'Falha de comunicação. Tente novamente.', submitter);
+        } finally {
+            delete form.dataset.requestPending;
+            if (submitter?.isConnected) {
+                submitter.disabled = false;
+                submitter.textContent = originalText;
+            }
+        }
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeSystemConfirm();
     initializeAdminNavigation();
     initializeAdminContextModals();
     initializeAdminAsyncForms();
+    initializeAdminManagementForms();
 });
 
 const phoneInput = document.querySelector('#phone');

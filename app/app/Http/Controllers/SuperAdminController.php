@@ -8,17 +8,18 @@ use App\Models\PhoneLicenseLease;
 use App\Models\SipTrunk;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\OperatorActivityRecorder;
 use App\Services\Pbx\AmiClient;
 use App\Services\Pbx\ExtensionAllocator;
 use App\Services\Pbx\PbxConfigGenerator;
-use App\Services\OperatorActivityRecorder;
+use App\Services\PhoneLicenseLeaseReaper;
 use App\Services\PhoneLicenseManager;
-use Illuminate\Http\RedirectResponse;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -27,10 +28,17 @@ use Throwable;
 
 class SuperAdminController extends Controller
 {
-    public function index(): View
+    public function index(PhoneLicenseLeaseReaper $reaper, PhoneLicenseManager $licenses): View
     {
+        $reaper->reap();
+        $activeLeaseCutoff = $licenses->staleBefore();
+
         return view('admin.index', [
-            'tenants' => Tenant::query()->with(['trunks', 'extensions.user', 'phoneLicenseLeases.user', 'phoneLicenseLeases.extension', 'pauseReasons' => fn ($query) => $query->orderBy('name')])->orderBy('name')->get(),
+            'tenants' => Tenant::query()->with([
+                'trunks', 'extensions.user',
+                'phoneLicenseLeases' => fn ($query) => $query->where('last_seen_at', '>=', $activeLeaseCutoff)->with(['user', 'extension']),
+                'pauseReasons' => fn ($query) => $query->orderBy('name'),
+            ])->orderBy('name')->get(),
             'trunks' => SipTrunk::query()->withCount('tenants')->orderBy('name')->get(),
             'latestRouteFailures' => CallRecord::query()
                 ->with(['tenant:id,name', 'extension:id,number', 'trunk:id,name,tech_prefix'])
@@ -63,7 +71,7 @@ class SuperAdminController extends Controller
         return back()->with('status', 'Empresa criada. Vincule uma rota e depois crie os ramais.');
     }
 
-    public function updateTenant(Request $request, Tenant $tenant, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity): RedirectResponse
+    public function updateTenant(Request $request, Tenant $tenant, PhoneLicenseManager $licenses, OperatorActivityRecorder $activity, PhoneLicenseLeaseReaper $reaper): RedirectResponse
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
@@ -74,7 +82,8 @@ class SuperAdminController extends Controller
             'concurrent_agent_limit' => ['required', 'integer', 'min:0', 'max:10000'],
         ]);
 
-        $licensesInUse = $tenant->phoneLicenseLeases()->count();
+        $reaper->reap($tenant->id);
+        $licensesInUse = $tenant->phoneLicenseLeases()->where('last_seen_at', '>=', $licenses->staleBefore())->count();
         if ((int) $data['concurrent_agent_limit'] < $licensesInUse) {
             return back()->withErrors(['concurrent_agent_limit' => "Não é possível reduzir o limite abaixo das {$licensesInUse} licença(s) em uso."])->withInput();
         }

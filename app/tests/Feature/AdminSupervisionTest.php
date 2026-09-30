@@ -6,14 +6,15 @@ use App\Models\CallRecord;
 use App\Models\Extension;
 use App\Models\ExtensionPresence;
 use App\Models\OperatorActivityLog;
-use App\Models\PhoneLicenseLease;
 use App\Models\OperatorPauseSession;
 use App\Models\OperatorSession;
 use App\Models\PauseReason;
+use App\Models\PhoneLicenseLease;
 use App\Models\SupervisionSession;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Pbx\CallStateReconciler;
+use App\Services\PhoneLicenseManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
@@ -29,7 +30,7 @@ class AdminSupervisionTest extends TestCase
         $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
         $agent = User::factory()->create(['tenant_id' => $tenant->id, 'name' => 'Agente Um']);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
-        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId(), 'last_seen_at' => now()]);
         ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
         $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81999999999', 'status' => 'answered', 'started_at' => now()->subMinute(), 'answered_at' => now()->subSeconds(50)]);
 
@@ -54,6 +55,7 @@ class AdminSupervisionTest extends TestCase
         $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'session-current', 'last_seen_at' => now()]);
         ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
         $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81999999999', 'status' => 'ringing', 'started_at' => now()->subMinutes(3)]);
 
@@ -64,6 +66,29 @@ class AdminSupervisionTest extends TestCase
         $this->assertNotNull($call->fresh()->ended_at);
     }
 
+    public function test_stale_phone_session_is_released_and_supervision_shows_agent_offline(): void
+    {
+        $tenant = Tenant::create(['name' => 'Operação expirada', 'slug' => 'operacao-expirada', 'status' => 'active']);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
+        $agent = User::factory()->create(['tenant_id' => $tenant->id]);
+        $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        $lastSeenAt = now()->subSeconds(PhoneLicenseManager::HEARTBEAT_TIMEOUT_SECONDS + 5);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'abandoned-session', 'last_seen_at' => $lastSeenAt]);
+        ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => $lastSeenAt, 'heartbeat_at' => $lastSeenAt]);
+        $call = CallRecord::create(['tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'to_number' => '81999999999', 'status' => 'answered', 'started_at' => $lastSeenAt, 'answered_at' => $lastSeenAt]);
+
+        $this->mock(CallStateReconciler::class)->shouldReceive('reconcile')->once();
+
+        $this->actingAs($admin)->getJson('/administracao/acompanhamento/agentes?tenant_id='.$tenant->id)
+            ->assertOk()
+            ->assertJsonPath('agents.0.state', 'offline')
+            ->assertJsonPath('agents.0.call', null);
+
+        $this->assertDatabaseMissing('phone_license_leases', ['extension_id' => $extension->id]);
+        $this->assertDatabaseHas('call_records', ['id' => $call->id]);
+        $this->assertSame('offline', $extension->presence->fresh()->state);
+    }
+
     public function test_status_counter_restarts_at_midnight_in_the_operation_timezone(): void
     {
         $localNow = Carbon::parse('2026-08-14 00:10:00', 'America/Sao_Paulo');
@@ -72,6 +97,7 @@ class AdminSupervisionTest extends TestCase
         $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'session-current', 'last_seen_at' => now()]);
         ExtensionPresence::create([
             'extension_id' => $extension->id,
             'state' => 'available',
@@ -98,7 +124,7 @@ class AdminSupervisionTest extends TestCase
         $this->actingAs($admin)->post('/administracao/pausas', ['tenant_id' => $tenant->id, 'name' => 'Banheiro', 'color' => '#f4b000', 'max_minutes' => 10])->assertRedirect()->assertSessionHasNoErrors();
         $pause = PauseReason::firstOrFail();
         $this->actingAs($admin)->get('/administracao')->assertOk()->assertSee('Configurar pausas')->assertSee('Banheiro');
-        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId(), 'last_seen_at' => now()]);
         $session = ['sip_agent' => ['user_id' => $agent->id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => '999']];
 
         $this->actingAs($agent)->withSession($session)->postJson('/telefone/pausa', ['pause_reason_id' => $pause->id])->assertOk();
@@ -113,7 +139,7 @@ class AdminSupervisionTest extends TestCase
         $other = Tenant::create(['name' => 'Operação B', 'slug' => 'operacao-b', 'status' => 'active']);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
-        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId()]);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => session()->getId(), 'last_seen_at' => now()]);
         $foreignPause = PauseReason::create(['tenant_id' => $other->id, 'name' => 'Feedback', 'color' => '#7154e8']);
 
         $this->actingAs($agent)->withSession(['sip_agent' => ['user_id' => $agent->id, 'tenant_id' => $tenant->id, 'extension_id' => $extension->id, 'extension' => '999']])
@@ -168,6 +194,7 @@ class AdminSupervisionTest extends TestCase
         $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'superadmin', 'must_change_password' => false]);
         $agent = User::factory()->create(['tenant_id' => $tenant->id]);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'session-current', 'last_seen_at' => now()]);
         ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
 
         $this->mock(CallStateReconciler::class)
@@ -207,6 +234,7 @@ class AdminSupervisionTest extends TestCase
         $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
         $agent = User::factory()->create(['tenant_id' => $tenant->id, 'name' => 'Agente Remoto']);
         $extension = Extension::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'number' => 999, 'sip_username' => 't1-e999', 'sip_secret' => 'Abc12345', 'status' => 'active']);
+        PhoneLicenseLease::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'session-current', 'last_seen_at' => now()]);
         ExtensionPresence::create(['extension_id' => $extension->id, 'state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
         OperatorSession::create(['tenant_id' => $tenant->id, 'user_id' => $agent->id, 'extension_id' => $extension->id, 'session_key' => 'agent-session-key', 'logged_in_at' => now()->subHour(), 'last_seen_at' => now()]);
         app('session')->driver()->getHandler()->write('agent-session-key', 'remote-session');
@@ -223,6 +251,7 @@ class AdminSupervisionTest extends TestCase
             'extension_id' => $extension->id,
             'action' => 'forced_logout',
         ]);
+        $this->assertDatabaseMissing('phone_license_leases', ['extension_id' => $extension->id]);
         $this->assertSame('', app('session')->driver()->getHandler()->read('agent-session-key'));
     }
 

@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Extension;
-use App\Models\PhoneLicenseLease;
+use App\Models\ExtensionPresence;
+use App\Models\OperatorSession;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\PhoneLicenseLeaseReaper;
 use App\Services\PhoneLicenseManager;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -116,6 +118,51 @@ class PhoneLicenseFlowTest extends TestCase
         ])->assertRedirect();
 
         $this->assertDatabaseMissing('phone_license_leases', ['extension_id' => $agent->id]);
+    }
+
+    public function test_phone_heartbeat_renews_the_license_lease(): void
+    {
+        $agent = $this->agent('heartbeat', 1, 'agente@heartbeat.test');
+        $sessionKey = 'sessao-heartbeat';
+        $lease = app(PhoneLicenseManager::class)->acquire($agent->user, $agent, $sessionKey);
+        $initialLastSeenAt = $lease->last_seen_at;
+        $this->travel(80)->seconds();
+
+        $this->actingAs($agent->user)->withSession(['sip_agent' => [
+            'user_id' => $agent->user_id,
+            'tenant_id' => $agent->tenant_id,
+            'extension_id' => $agent->id,
+            'extension' => (string) $agent->number,
+            'license_session_key' => $sessionKey,
+        ]])->postJson('/telefone/presenca', ['state' => 'available'])->assertOk();
+
+        $this->assertTrue($lease->fresh()->last_seen_at->greaterThan($initialLastSeenAt));
+        $this->assertTrue(app(PhoneLicenseManager::class)->hasLeaseForSession($agent->user, $agent, $sessionKey));
+    }
+
+    public function test_stale_browser_session_releases_license_and_marks_operator_offline(): void
+    {
+        $agent = $this->agent('expirada', 1, 'agente@expirada.test');
+        $lease = app(PhoneLicenseManager::class)->acquire($agent->user, $agent, 'sessao-expirada');
+        $lastSeenAt = now()->subSeconds(PhoneLicenseManager::HEARTBEAT_TIMEOUT_SECONDS + 5);
+        $lease->update(['last_seen_at' => $lastSeenAt]);
+        ExtensionPresence::create(['extension_id' => $agent->id, 'state' => 'available', 'state_since' => $lastSeenAt, 'heartbeat_at' => $lastSeenAt]);
+        $operatorSession = OperatorSession::create([
+            'tenant_id' => $agent->tenant_id,
+            'user_id' => $agent->user_id,
+            'extension_id' => $agent->id,
+            'session_key' => 'sessao-expirada',
+            'logged_in_at' => $lastSeenAt->copy()->subHour(),
+            'last_seen_at' => $lastSeenAt,
+        ]);
+
+        $this->assertSame(1, app(PhoneLicenseLeaseReaper::class)->reap($agent->tenant_id));
+
+        $this->assertDatabaseMissing('phone_license_leases', ['id' => $lease->id]);
+        $this->assertSame('offline', $agent->presence->fresh()->state);
+        $this->assertSame($lastSeenAt->format('Y-m-d H:i:s'), $operatorSession->fresh()->logged_out_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseHas('operator_activity_logs', ['extension_id' => $agent->id, 'action' => 'session_expired']);
+        $this->assertFalse(app(PhoneLicenseManager::class)->hasActiveLease($agent));
     }
 
     private function agent(string $slug, int $limit, string $email, ?Tenant $tenant = null): Extension
