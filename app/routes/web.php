@@ -69,6 +69,8 @@ Route::prefix('administracao')->group(function () {
     Route::middleware(['auth', 'password.changed', 'tenant.admin'])->group(function () {
         Route::get('/equipe/usuarios', [CompanyUserController::class, 'index'])->name('admin.company-users.index');
         Route::post('/equipe/usuarios', [CompanyUserController::class, 'store'])->name('admin.company-users.store');
+        Route::put('/equipe/usuarios/{user}', [CompanyUserController::class, 'update'])->name('admin.company-users.update');
+        Route::delete('/equipe/usuarios/{user}', [CompanyUserController::class, 'destroy'])->name('admin.company-users.destroy');
     });
 
     Route::middleware(['auth', 'password.changed', 'superadmin'])->group(function () {

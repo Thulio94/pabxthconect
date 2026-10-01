@@ -19,6 +19,17 @@
                 <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Login</th><th>Ramal</th><th>Perfil</th><th>Senha inicial</th></tr></thead><tbody data-company-user-credential></tbody></table></div>
             </section>
         </section>
+        <section class="panel company-user-management" data-company-user-panel>
+            <div class="section-title"><div><p class="eyebrow">ADMINISTRAÇÃO DA EQUIPE</p><h2>Usuários cadastrados</h2><p class="muted">Gerencie agentes e supervisores desta empresa. O limite de licenças permanece sob controle exclusivo do administrador central.</p></div><span class="user-count">{{ $users->count() }} usuários</span></div>
+            <div class="async-feedback" data-company-user-feedback role="status" aria-live="polite" hidden></div>
+            <div class="company-user-list" data-company-user-list>
+                @include('admin.partials.company-users-list', ['users' => $users])
+            </div>
+            <section class="credential-results company-user-credentials" data-company-user-credentials hidden aria-live="polite">
+                <div class="credential-results-heading"><div><p class="mini-label">GUARDE AGORA</p><h3>Credencial atualizada</h3><p class="muted">A senha aparece somente nesta confirmação. Compartilhe por um canal seguro.</p></div></div>
+                <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Login</th><th>Ramal</th><th>Perfil</th><th>Senha</th></tr></thead><tbody data-company-user-credential></tbody></table></div>
+            </section>
+        </section>
     </main>
 </div>
 @endsection

@@ -456,14 +456,8 @@ const initializeAdminManagementForms = () => {
 };
 
 const initializeCompanyUserForm = () => {
-    const form = document.querySelector('[data-company-user-form]');
-    if (!form) return;
-
-    const panel = form.closest('[data-company-user-panel]');
-    const feedback = panel?.querySelector('[data-company-user-feedback]');
-    const reveal = panel?.querySelector('[data-company-user-credentials]');
-    const rowTarget = reveal?.querySelector('[data-company-user-credential]');
-    const setFeedback = (message, isError = false) => {
+    const setFeedback = (panel, message, isError = false) => {
+        const feedback = panel?.querySelector('[data-company-user-feedback]');
         if (!feedback) return;
         feedback.textContent = message;
         feedback.hidden = !message;
@@ -471,17 +465,66 @@ const initializeCompanyUserForm = () => {
         feedback.classList.toggle('is-success', !isError);
     };
 
-    form.addEventListener('submit', async (event) => {
+    const showCredentials = (credentials, panel) => {
+        const reveal = panel?.querySelector('[data-company-user-credentials]');
+        const rowTarget = reveal?.querySelector('[data-company-user-credential]');
+        const credential = credentials?.[0];
+        if (!credential || !rowTarget || !reveal) {
+            if (reveal) reveal.hidden = true;
+            return;
+        }
+        rowTarget.replaceChildren();
+        [credential.name, credential.login || credential.email, credential.extension || '—', credential.role === 'supervisor' ? 'Supervisor' : 'Agente', credential.password].forEach((value, index) => {
+            const cell = document.createElement('td');
+            cell.textContent = String(value ?? '—');
+            if (index === 4) cell.className = 'credential-secret';
+            rowTarget.append(cell);
+        });
+        reveal.hidden = false;
+    };
+
+    document.addEventListener('change', (event) => {
+        const select = event.target.closest('[data-company-user-role]');
+        if (!select) return;
+        const form = select.closest('form');
+        const isAgent = select.value === 'agent';
+        form.querySelectorAll('[data-agent-setting]').forEach((field) => {
+            field.hidden = !isAgent;
+            const input = field.querySelector('[data-agent-required]');
+            if (input) input.required = isAgent && Boolean(field.querySelector('[name="number"]')?.value);
+        });
+    });
+
+    document.addEventListener('submit', async (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.matches('[data-company-user-form], [data-company-user-action]')) return;
         event.preventDefault();
+        if (form.dataset.requestPending === 'true') return;
+
         const submitter = event.submitter || form.querySelector('button[type="submit"]');
         const originalText = submitter?.textContent;
-        if (submitter) { submitter.disabled = true; submitter.textContent = 'Criando…'; }
-        setFeedback('Criando usuário…');
-        if (reveal) reveal.hidden = true;
+        const panel = form.closest('[data-company-user-panel]');
+        const isCreate = form.matches('[data-company-user-form]');
+        form.dataset.requestPending = 'true';
 
         try {
+            if (form.dataset.companyUserConfirm && window.ThconectDialog?.confirm) {
+                const accepted = await window.ThconectDialog.confirm({
+                    title: form.dataset.companyUserConfirmTitle || 'Confirmar ação',
+                    message: form.dataset.companyUserConfirm,
+                    confirmLabel: form.dataset.companyUserConfirmLabel || 'Confirmar',
+                    tone: 'danger',
+                    opener: submitter,
+                });
+                if (!accepted) return;
+            }
+
+            if (submitter) { submitter.disabled = true; submitter.textContent = isCreate ? 'Criando…' : 'Salvando…'; }
+            setFeedback(panel, isCreate ? 'Criando usuário…' : 'Salvando alterações…');
+            document.querySelectorAll('[data-company-user-credentials]').forEach((element) => { element.hidden = true; });
+
             const response = await fetch(form.action, {
-                method: form.method || 'POST',
+                method: 'POST',
                 body: new FormData(form),
                 credentials: 'same-origin',
                 headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -489,25 +532,26 @@ const initializeCompanyUserForm = () => {
             const result = await response.json();
             if (!response.ok) {
                 const validation = Object.values(result.errors || {}).flat()[0];
-                throw new Error(validation || result.message || 'Não foi possível criar o usuário.');
+                throw new Error(validation || result.message || 'Não foi possível concluir a ação.');
             }
 
-            const credential = result.credentials?.[0];
-            if (!credential || !rowTarget) throw new Error('O usuário foi criado, mas a confirmação de credenciais não veio completa. Contate o administrador antes de tentar novamente.');
-
-            rowTarget.replaceChildren();
-            [credential.name, credential.login || credential.email, credential.extension || '—', credential.role === 'supervisor' ? 'Supervisor' : 'Agente', credential.password].forEach((value, index) => {
-                const cell = document.createElement('td');
-                cell.textContent = String(value ?? '—');
-                if (index === 4) cell.className = 'credential-secret';
-                rowTarget.append(cell);
-            });
-            reveal.hidden = false;
-            form.reset();
-            setFeedback(result.message || 'Usuário criado.');
+            if (typeof result.users_html === 'string') {
+                const list = document.querySelector('[data-company-user-list]');
+                if (list) list.innerHTML = result.users_html;
+                const count = document.querySelector('.company-user-management .user-count');
+                if (count && list) count.textContent = `${list.querySelectorAll('[data-company-user-id]').length} usuários`;
+            }
+            if (isCreate) form.reset();
+            if (result.credentials?.length) {
+                const credentialsPanel = document.querySelector('.company-user-management [data-company-user-panel]')
+                    || document.querySelector('.company-user-management');
+                showCredentials(result.credentials, credentialsPanel);
+            }
+            setFeedback(panel, result.message || 'Alterações salvas.');
         } catch (error) {
-            setFeedback(error.message || 'Falha de comunicação. Tente novamente.', true);
+            setFeedback(panel, error.message || 'Falha de comunicação. Tente novamente.', true);
         } finally {
+            delete form.dataset.requestPending;
             if (submitter?.isConnected) { submitter.disabled = false; submitter.textContent = originalText; }
         }
     });

@@ -197,6 +197,132 @@ class SupervisorRoleTest extends TestCase
         $this->assertNotEmpty($supervisorResponse->json('credentials.0.password'));
     }
 
+    public function test_company_administrator_can_list_only_users_from_its_company_without_license_controls(): void
+    {
+        $tenant = $this->tenant('Empresa Administrada');
+        $otherTenant = $this->tenant('Empresa Vizinha');
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $agent = $this->agent($tenant, 'Agente da Empresa', 999);
+        $supervisor = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'supervisor', 'name' => 'Supervisor da Empresa']);
+        $foreignAgent = $this->agent($otherTenant, 'Agente de Outra Empresa', 999);
+
+        $this->actingAs($admin)->get('/administracao/equipe/usuarios')
+            ->assertOk()
+            ->assertSee('Usuários cadastrados')
+            ->assertSee('Agente da Empresa')
+            ->assertSee('Supervisor da Empresa')
+            ->assertDontSee('Agente de Outra Empresa')
+            ->assertDontSee('concurrent_agent_limit')
+            ->assertSee(route('admin.company-users.update', $agent), false)
+            ->assertSee(route('admin.company-users.destroy', $supervisor), false);
+    }
+
+    public function test_company_administrator_can_disable_agent_and_revoke_its_phone_session_without_changing_license_quota(): void
+    {
+        $tenant = $this->tenant('Empresa Administrada');
+        $tenant->update(['concurrent_agent_limit' => 7]);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $agent = $this->agent($tenant, 'Agente Atualizado', 999);
+        $extension = $agent->pbxExtension()->firstOrFail();
+        PhoneLicenseLease::create([
+            'tenant_id' => $tenant->id,
+            'user_id' => $agent->id,
+            'extension_id' => $extension->id,
+            'session_key' => 'agent-phone-session',
+            'last_seen_at' => now(),
+        ]);
+        $extension->presence()->create(['state' => 'available', 'state_since' => now(), 'heartbeat_at' => now()]);
+        $this->mock(PbxConfigGenerator::class, fn ($mock) => $mock->shouldReceive('generate')->once());
+
+        $this->actingAs($admin)->putJson("/administracao/equipe/usuarios/{$agent->id}", [
+            'name' => 'Agente Renomeado',
+            'email' => 'RENOMEADO@EMPRESA.TEST',
+            'role' => 'agent',
+            'number' => 999,
+            'status' => 'disabled',
+            'concurrent_agent_limit' => 1,
+        ])->assertOk()->assertJsonMissingPath('credentials.0.password');
+
+        $this->assertDatabaseHas('users', ['id' => $agent->id, 'name' => 'Agente Renomeado', 'email' => 'renomeado@empresa.test']);
+        $this->assertDatabaseHas('extensions', ['id' => $extension->id, 'status' => 'disabled']);
+        $this->assertDatabaseMissing('phone_license_leases', ['extension_id' => $extension->id]);
+        $this->assertDatabaseHas('extension_presences', ['extension_id' => $extension->id, 'state' => 'offline']);
+        $this->assertSame(7, $tenant->fresh()->concurrent_agent_limit);
+    }
+
+    public function test_company_administrator_can_change_agent_role_without_gaining_license_quota_control(): void
+    {
+        $tenant = $this->tenant('Empresa Administrada');
+        $tenant->update(['concurrent_agent_limit' => 5]);
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $agent = $this->agent($tenant, 'Agente', 999);
+        $extension = $agent->pbxExtension()->firstOrFail();
+        $this->mock(PbxConfigGenerator::class, fn ($mock) => $mock->shouldReceive('generate')->twice());
+
+        $this->actingAs($admin)->putJson("/administracao/equipe/usuarios/{$agent->id}", [
+            'name' => $agent->name,
+            'email' => $agent->email,
+            'role' => 'supervisor',
+            'number' => 999,
+            'status' => 'active',
+        ])->assertOk()->assertJsonPath('credentials.0.role', 'supervisor');
+        $this->assertDatabaseHas('users', ['id' => $agent->id, 'role' => 'supervisor', 'must_change_password' => true]);
+        $this->assertDatabaseHas('extensions', ['id' => $extension->id, 'status' => 'disabled']);
+
+        $this->putJson("/administracao/equipe/usuarios/{$agent->id}", [
+            'name' => $agent->name,
+            'email' => $agent->email,
+            'role' => 'agent',
+            'number' => 999,
+            'status' => 'active',
+        ])->assertOk()->assertJsonPath('credentials.0.role', 'agent');
+        $this->assertDatabaseHas('users', ['id' => $agent->id, 'role' => 'agent']);
+        $this->assertDatabaseHas('extensions', ['id' => $extension->id, 'status' => 'active']);
+        $this->assertSame(5, $tenant->fresh()->concurrent_agent_limit);
+    }
+
+    public function test_company_administrator_can_reset_user_password_and_delete_own_users(): void
+    {
+        $tenant = $this->tenant('Empresa Administrada');
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $agent = $this->agent($tenant, 'Agente', 999);
+        $extensionId = $agent->pbxExtension()->firstOrFail()->id;
+        $this->mock(PbxConfigGenerator::class, fn ($mock) => $mock->shouldReceive('generate')->twice());
+
+        $response = $this->actingAs($admin)->putJson("/administracao/equipe/usuarios/{$agent->id}", [
+            'name' => 'Agente',
+            'email' => $agent->email,
+            'role' => 'agent',
+            'number' => 999,
+            'status' => 'active',
+            'reset_password' => true,
+        ])->assertOk()->assertJsonPath('credentials.0.role', 'agent');
+
+        $password = $response->json('credentials.0.password');
+        $this->assertNotEmpty($password);
+        $this->assertSame($password, $agent->pbxExtension()->firstOrFail()->fresh()->sip_secret);
+
+        $this->deleteJson("/administracao/equipe/usuarios/{$agent->id}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Usuário excluído da empresa. A licença, quando aplicável, foi liberada.');
+        $this->assertDatabaseMissing('users', ['id' => $agent->id]);
+        $this->assertDatabaseMissing('extensions', ['id' => $extensionId]);
+    }
+
+    public function test_company_administrator_cannot_edit_or_delete_users_from_another_company(): void
+    {
+        $tenant = $this->tenant('Empresa Administrada');
+        $otherTenant = $this->tenant('Empresa Alheia');
+        $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => 'tenant_admin', 'must_change_password' => false]);
+        $foreignAgent = $this->agent($otherTenant, 'Agente Alheio', 999);
+
+        $this->actingAs($admin)->putJson("/administracao/equipe/usuarios/{$foreignAgent->id}", [
+            'name' => 'Alterado', 'email' => $foreignAgent->email, 'role' => 'agent', 'number' => 999, 'status' => 'active',
+        ])->assertNotFound();
+        $this->deleteJson("/administracao/equipe/usuarios/{$foreignAgent->id}")->assertNotFound();
+        $this->assertDatabaseHas('users', ['id' => $foreignAgent->id, 'tenant_id' => $otherTenant->id, 'name' => 'Agente Alheio']);
+    }
+
     public function test_company_administrator_cannot_create_privileged_roles_and_other_profiles_cannot_open_company_creation_screen(): void
     {
         $tenant = $this->tenant('Empresa Controlada');
